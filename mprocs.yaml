@@ -1,0 +1,5 @@
+procs:
+  backend:
+    shell: cd backend && npm run dev
+  frontend:
+    shell: cd frontend && npm run dev
