@@ -33,6 +33,10 @@ mprocs.log
 backend/termbook_bashrc_sess-*
 frontend/test-results/
 frontend/playwright-report/
+backend.pid
+backend/*.log
+backend/test_*.js
+backend/*.test.js
 
 # OS generated files
 Thumbs.db

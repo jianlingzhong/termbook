@@ -8,12 +8,14 @@
 
   --text-primary: #e0e5ff;
   --text-secondary: #7f8ea3;
-  --text-muted: #565f77;
+  --text-muted: #6b7280;
 
   --accent-cyan: #00ecec;
   --accent-purple: #8b5cf6;
+  --accent-magenta: #ff00ff;
   --accent-cyan-glow: rgba(0, 236, 236, 0.4);
   --accent-purple-glow: rgba(139, 92, 246, 0.4);
+  --accent-magenta-glow: rgba(255, 0, 255, 0.4);
 
   --border-light: rgba(255, 255, 255, 0.08);
   --border-active: rgba(0, 236, 236, 0.3);
@@ -125,15 +127,22 @@ html {
 
 /* TOP HEADER */
 .top-header {
-  height: var(--header-height);
-  padding: 0 24px;
+  height: 60px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 0 40px;
   border-bottom: 1px solid var(--border-light);
-  background: rgba(8, 10, 16, 0.8);
-  backdrop-filter: blur(8px);
-  z-index: 10;
+  background: rgba(19, 21, 32, 0.5);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    z-index: 50;
+  }
+
+  .top-header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
 }
 
 .pwd-breadcrumb {
@@ -143,11 +152,10 @@ html {
   font-family: var(--font-mono);
   font-size: 13px;
   color: var(--text-primary);
-  background: linear-gradient(90deg, rgba(0, 236, 236, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
-  border: 1px solid var(--border-active);
-  padding: 6px 16px;
-  border-radius: 20px;
-  box-shadow: 0 0 15px rgba(0, 236, 236, 0.15);
+  background: rgba(255, 255, 255, 0.03);
+    padding: 6px 14px;
+    border-radius: 99px;
+    border: 1px solid var(--border-light);
 }
 
 .pwd-separator {
@@ -218,6 +226,7 @@ button:hover,
   overflow: hidden;
   transition: border-color 0.3s ease, box-shadow 0.3s ease;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
 }
 
 .notebook-cell:focus-within {
@@ -226,30 +235,57 @@ button:hover,
 }
 
 .cell-header {
-  padding: 12px 16px;
   display: flex;
-  align-items: center;
-  background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid var(--border-light);
-}
+    align-items: center;
+    justify-content: space-between;
+      gap: 12px;
+      padding: 8px 16px;
+      background: rgba(255, 255, 255, 0.02);
+      border-bottom: 1px solid var(--border-light);
+    }
+        .cell-header-left {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          flex: 1;
+        }
+
+        .cell-header-breadcrumb {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-family: var(--font-mono);
+          font-size: 13px;
+          color: var(--accent-cyan);
+          background: rgba(0, 236, 236, 0.08);
+          padding: 3px 12px;
+          border-radius: 6px;
+          border: 1px solid rgba(0, 236, 236, 0.2);
+          max-width: 80%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-weight: 600;
+        }
 
 .prompt-arrow {
   color: var(--accent-cyan);
   font-weight: bold;
-  margin-right: 12px;
   font-size: 14px;
-}
-
-.input-container {
-  flex: 1;
-  position: relative;
-  display: flex;
-  align-items: center;
 }
 
 .read-only-command {
   white-space: pre-wrap;
   word-break: break-all;
+  height: auto;
+  line-height: 20px;
+}
+
+.input-with-ghost {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
 }
 
 /* GLOBAL CHAT INPUT */
@@ -316,16 +352,15 @@ button:hover,
 
 .global-ghost-text {
   position: absolute;
-  top: 14px;
-  left: 24px;
-  /* matches padding */
+  top: 0;
+    left: 0;
   pointer-events: none;
   font-family: var(--font-mono);
   font-size: 14px;
   white-space: pre;
   display: flex;
   align-items: center;
-  /* Account for the prefix width dynamically? We use the hidden input span hack */
+  height: 100%;
 }
 
 .global-ghost-text span:first-child {
@@ -338,16 +373,31 @@ button:hover,
 }
 
 
-.cell-output {
-  padding: 16px;
-  min-height: 40px;
-}
+    .cell-output {
+    padding: 2px 16px;
+      max-height: 500px;
+      overflow-y: auto;
+    }
 
+    .cell-output:empty,
+    .cell-output-collapsed {
+      display: none !important;
+      visibility: hidden !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      height: 0 !important;
+      min-height: 0 !important;
+      border: none !important;
+      outline: none !important;
+    }
+        /* Reverted aggressive cursor override as it caused line-disappearing artifacts in nvim */
+        /* We now use xterm.js native theme settings in TuiModal.jsx instead */
 .snapshot-output {
   font-family: var(--font-mono);
   font-size: 14px;
   line-height: 1.4;
   white-space: pre-wrap;
+  word-break: break-all;
   color: var(--text-primary);
 }
 
@@ -383,6 +433,7 @@ button:hover,
   background-color: transparent !important;
 }
 
+
 /* SCROLLBARS */
 ::-webkit-scrollbar {
   width: 8px;
@@ -400,4 +451,44 @@ button:hover,
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
+}
+.tui-active-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 236, 236, 0.1);
+  color: var(--accent-cyan);
+  padding: 6px 14px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  border: 1px solid rgba(0, 236, 236, 0.2);
+  text-shadow: 0 0 10px rgba(0, 236, 236, 0.5);
+}
+
+.pulse-dot {
+  width: 6px;
+  height: 6px;
+  background-color: var(--accent-cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--accent-cyan);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(1.5);
+    opacity: 0.5;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
