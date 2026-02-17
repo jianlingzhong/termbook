@@ -8,6 +8,24 @@
 
 - **Regex & Control Sequences**: When matching terminal escape sequences (like OSC 1337) in `server.js`, avoid over-escaping in `new RegExp` templates. Use hex escapes (`\x1b`, `\x07`) directly.
 - **Terminal Snapshotting**: xterm.js and PTY operations are asynchronous. When generating a persistent snapshot of a command's output, implement a sufficient delay (e.g., 250ms+) after the completion marker is received to allow the terminal buffer to flush.
-- **Port Management & Proxying**: Avoid hardcoding backend ports (e.g., `:3001`) in the frontend. Use relative URLs and configure the Vite proxy in `vite.config.js` to route `/api` and `/ws` traffic. This prevents connection mismatches and env-specific bugs.
-- **Visual Diagnostics**: If Playwright tests timeout without output, use a browser subagent or screenshots immediately. This is the fastest way to catch "Blank Page" crashes caused by JavaScript `ReferenceError` during initial render.
+- **Port Management & Conflict Prevention**: Before starting any server or test suite, you MUST check that the required ports (e.g., `:3000`, `:5173`) are not already in use by stale processes. Use `lsof -i :PORT` to verify.
+- **Surgical Process Killing (CRITICAL SAFETY RULE)**:
+  - **NEVER** use `pkill -f "node"`, `pkill -f "vite"`, or `killall`. These commands destroy the user's IDE backends, unrelated local projects, and other vital background services.
+  - **NEVER** use `kill -9` unless legally stopping a process fails, as it causes severe data corruption and orphaned memory leaks (especially for Playwright headless browsers).
+  - **ALWAYS** target specific PIDs occupying a port using `lsof -ti :PORT | xargs kill`, or gracefully shut down services using their direct interface (like sending SIGTERM).
+- **Process Management via mprocs**: `mprocs` is used to manage long-running backend and frontend processes. **CRITICAL: DO NOT start or restart `mprocs` or the dev servers yourself (unless explicitly instructed).** Assume the user is running `mprocs` or their dev servers in a separate terminal. Your restarts will collide with theirs and lock the ports. Hot-reloading handles your code changes automatically. If you suspect a dev server is deadlocked and a full restart is genuinely required, you MUST **stop and ask the user** to execute the restart manually.
 - **Renaming Integrity**: After refactoring or renaming functions, perform a global `grep` search for the old string. LSPs may miss references in JSX props or event handlers.
+
+## Debugging & Logging Protocols
+
+- **Unified Log Files**: All backend logs are written to `/tmp/termbook-backend.log`. All frontend logs (sent via `/api/frontend-log`) are written to `/tmp/termbook-frontend.log`. Do not look for logs in terminal standard output.
+- **Append-Only with Timestamps**: Logs are strictly append-only. **Every log line MUST begin with an ISO timestamp** (e.g., `[2026-02-16T15:25:00.000Z]`). This ensures strict chronological order across hot-reloads.
+- **Hot-Reload Detection**: When the backend restarts, it appends `==== BACKEND STARTED AT <ISO_TIMESTAMP> ====`. When the React frontend mounts, it appends `==== FRONTEND RELOADED ====`.
+- **Identifying Stale Logs**: Because the servers hot-reload, the logs contain previous test runs. **Always check the timestamp of the latest restart marker.** If you made a code change at 3:25 PM but the last restart marker in the log is from 3:20 PM, the server **crashed during hot-reload** and failed to boot. The logs following that older marker are stale. Fix your syntax error before trusting the logs.
+
+## UI/UX & Focus Hygiene
+
+- **Focus Recovery**: When closing modals or overlays (like TUIs), always explicitly return focus to the primary input element to maintain a seamless keyboard-driven experience.
+- **Dynamic ghost text**: When implementing ghost text for auto-completion, ensure its horizontal position is dynamically calculated or reactively bound to the input's actual starting position, accounting for variable-width prefixes.
+- **Buffer Persistence**: For terminal-like components, ensure snapshots of output buffers are persisted in a higher-level state (e.g., App or Session state) rather than just component-local state. This prevents data loss during re-renders or session switches.
+- **Full Buffer Snapshots**: When generating HTML snapshots of terminal output, ensure the entire relevant buffer is serialized, not just the active viewport, to allow for post-execution scrolling and review.

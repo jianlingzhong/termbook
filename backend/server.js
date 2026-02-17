@@ -10,6 +10,19 @@ const { v4: uuidv4 } = require('uuid');
 const configPath = path.join(__dirname, '..', 'app_config.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
+const backendLog = '/tmp/termbook-backend.log';
+const frontendLog = '/tmp/termbook-frontend.log';
+
+function log(msg) {
+  const ts = new Date().toISOString();
+  const line = `[${ts}] ${msg}`;
+  console.log(line);
+  fs.appendFileSync(backendLog, line + '\n', 'utf8');
+}
+
+fs.appendFileSync(backendLog, `\n==== BACKEND STARTED AT ${new Date().toISOString()} ====\n`, 'utf8');
+
+
 const app = express();
 // Lock down CORS to the frontend development server
 app.use(cors({ origin: 'http://localhost:5173' }));
@@ -29,8 +42,9 @@ function killSession(sessionId) {
   if (session && session.ptyProcess) {
     try {
       session.ptyProcess.kill('SIGKILL');
+      log(`killSession: Killed PTY for session ${sessionId}`);
     } catch (e) {
-      console.error(`Failed to kill PTY for session ${sessionId}:`, e);
+      log(`killSession: Failed to kill PTY for session ${sessionId}: ${e.message}`);
     }
   }
   sessions.delete(sessionId);
@@ -85,6 +99,7 @@ function createSession(sessionId) {
   // Initialize invisible Prompt completion tracking
   ptyProcess.stdout.on('data', (data) => {
     const str = data.toString();
+    log(`PTY stdout [${sessionId}]: ${JSON.stringify(str)}`);
     session.tailBuf += str;
     if (session.tailBuf.length > 500) session.tailBuf = session.tailBuf.slice(-500);
 
@@ -99,11 +114,12 @@ function createSession(sessionId) {
       }
       session.tailBuf = session.tailBuf.replace(doneRegex, '');
 
-      // Drain the queue
-      while (session.ptyStartQueue.length > 0) {
+      // Execute the next command if there is one
+      if (session.ptyStartQueue.length > 0) {
         const msg = session.ptyStartQueue.shift();
         session.activeCellId = msg.cellId;
         if (session.ptyProcess && session.ptyProcess.stdin) {
+          log(`Dequeue (Boot) [${sessionId}]: cellId=${msg.cellId}, cmd=${JSON.stringify(msg.data.trim())}`);
           session.ptyProcess.stdin.write(msg.data.trim() + '\n');
         }
       }
@@ -115,9 +131,11 @@ function createSession(sessionId) {
       for (const ws of session.clients) {
         if (ws.readyState === ws.OPEN) {
           if (str.includes('\x1b[?1049l')) {
+            log(`Broadcast output+TUI_EXIT [${sessionId}] cellId=${session.activeCellId}`);
             ws.send(JSON.stringify({ type: 'output', data: str.replace('\x1b[?1049l', ''), cellId: session.activeCellId }));
             ws.send(JSON.stringify({ type: 'tui_exit', cellId: session.activeCellId }));
           } else {
+            log(`Broadcast output [${sessionId}] cellId=${session.activeCellId}: ${JSON.stringify(str)}`);
             ws.send(JSON.stringify({ type: 'output', data: str, cellId: session.activeCellId }));
           }
         }
@@ -130,26 +148,40 @@ function createSession(sessionId) {
 
         for (const ws of session.clients) {
           if (ws.readyState === ws.OPEN) {
+            log(`Broadcast exit [${sessionId}] exitCode=${exitCode}, cellId=${session.activeCellId}`);
             ws.send(JSON.stringify({ type: 'exit', exitCode, cellId: session.activeCellId, pwd: session.pwd }));
           }
         }
         session.tailBuf = session.tailBuf.replace(doneRegex, '');
         session.activeCellId = null; // Yield the PTY lock
+
+        if (session.ptyStartQueue.length > 0) {
+          const nextMsg = session.ptyStartQueue.shift();
+          session.activeCellId = nextMsg.cellId;
+          session.tailBuf = '';
+          if (session.ptyProcess && session.ptyProcess.stdin) {
+            log(`Dequeue (Next) [${sessionId}]: cellId=${nextMsg.cellId}, cmd=${JSON.stringify(nextMsg.data)}`);
+            session.ptyProcess.stdin.write(nextMsg.data + '\n');
+          }
+        }
       }
     }
   });
 
   ptyProcess.stderr.on('data', (data) => {
+    const str = data.toString();
+    log(`PTY stderr [${sessionId}]: ${JSON.stringify(str)}`);
     if (session.activeCellId) {
       for (const ws of session.clients) {
         if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: 'output', data: data.toString(), cellId: session.activeCellId }));
+          ws.send(JSON.stringify({ type: 'output', data: str, cellId: session.activeCellId }));
         }
       }
     }
   });
 
   ptyProcess.on('exit', (exitCode) => {
+    log(`PTY process exit [${sessionId}]: exitCode=${exitCode}`);
     // Clean up rc file
     if (fs.existsSync(session.rcPath)) {
       fs.unlinkSync(session.rcPath);
@@ -184,6 +216,7 @@ wss.on('connection', (ws) => {
       if (msg.type === 'join_session') {
         const sessionId = msg.sessionId || uuidv4();
         activeSessionId = sessionId;
+        log(`WS join_session received: id=${sessionId}`);
 
         const session = createSession(sessionId);
         session.clients.add(ws);
@@ -197,9 +230,11 @@ wss.on('connection', (ws) => {
 
       } else if (msg.type === 'start' && activeSessionId) {
         const session = sessions.get(activeSessionId);
+        log(`WS start received [${activeSessionId}]: cellId=${msg.cellId}, data=${JSON.stringify(msg.data)}`);
         if (!session) return;
 
-        if (!session.isPtyReady) {
+        if (!session.isPtyReady || session.activeCellId !== null) {
+        // If booting OR if another cell is actively running, enqueue it.
           session.ptyStartQueue.push(msg);
           return;
         }
@@ -212,6 +247,7 @@ wss.on('connection', (ws) => {
 
       } else if (msg.type === 'input' && activeSessionId) {
         const session = sessions.get(activeSessionId);
+        log(`WS input received [${activeSessionId}]: data=${JSON.stringify(msg.data)}`);
         if (session && session.ptyProcess && session.ptyProcess.stdin) {
           session.ptyProcess.stdin.write(msg.data);
         }
@@ -261,12 +297,23 @@ app.get('/api/sessions', (req, res) => {
 // Delete a session
 app.delete('/api/sessions/:id', (req, res) => {
   const { id } = req.params;
+  log(`API DELETE /api/sessions/${id}`);
   if (sessions.has(id)) {
     killSession(id);
     res.json({ success: true });
   } else {
     res.status(404).json({ error: 'Session not found' });
   }
+});
+
+// Write logs from frontend
+app.post('/api/frontend-log', (req, res) => {
+  const { message } = req.body;
+  if (message) {
+    const ts = new Date().toISOString();
+    fs.appendFileSync(frontendLog, `[${ts}] FRONTEND: ${message}\n`, 'utf8');
+  }
+  res.json({ success: true });
 });
 
 // History API endpoint
@@ -298,7 +345,13 @@ app.get('/api/history', (req, res) => {
   }
 });
 
-const PORT = 3001;
-server.listen(PORT, () => {
-  console.log(`${config.appName} Backend (Session-Aware) listening on http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  const PORT = process.env.PORT || 3001;
+  server.listen(PORT, () => {
+    log(`${config.appName} Backend (Session-Aware) listening on http://localhost:${PORT}`);
+    log(`Backend logs writing to ${backendLog}`);
+    log(`Frontend logs writing to ${frontendLog}`);
+  });
+}
+
+module.exports = { app, server };

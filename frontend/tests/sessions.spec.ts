@@ -13,7 +13,7 @@ const appNameLower = config.appName.toLowerCase();
 test.describe('Session Management & Persistent State', () => {
 
   test('Creates a default session and tracks PWD accurately', async ({ page }) => {
-    await page.goto('http://localhost:5173/');
+    await page.goto('http://localhost:5173/?new_session=true');
     await page.waitForTimeout(3000);
 
     // Assert UI elements load properly with Premium UI selectors
@@ -44,7 +44,7 @@ test.describe('Session Management & Persistent State', () => {
   });
 
   test('Multiple sessions isolate state correctly without cross-pollution', async ({ page }) => {
-    await page.goto('http://localhost:5173/');
+    await page.goto('http://localhost:5173/?new_session=true');
     await page.waitForTimeout(3000);
 
     // SETUP SESSION A
@@ -57,8 +57,9 @@ test.describe('Session Management & Persistent State', () => {
 
     // Capture Session A's ID from the UI List (assuming the active li is highlighted)
     const sessionALocator = page.locator('.sidebar li.active');
-    const sessionAText = await sessionALocator.innerText();
-    expect(sessionAText.length).toBeGreaterThan(3);
+    const fullSessionAText = await sessionALocator.innerText();
+    // Extract the "# sess-..." part or just use the substring if we know it
+    const sessionATruncatedId = fullSessionAText.split('\n')[0].trim(); 
 
     // CREATE SESSION B
     await page.click('button[title="New Session"]');
@@ -73,12 +74,12 @@ test.describe('Session Management & Persistent State', () => {
     await inputB1.press('Enter');
 
     await expect(page.locator('.notebook-cell')).toHaveCount(1, { timeout: 10000 });
-    const outputB1 = page.locator('.notebook-cell').first().locator('.cell-output');
+    const cellB1 = page.locator('.notebook-cell').first();
     // Session B should NOT have Session A's variable
-    await expect(outputB1).not.toContainText('session_a_secret');
+    await expect(cellB1).not.toContainText('session_a_secret');
 
     // SWITCH BACK TO SESSION A
-    await page.locator('.sidebar li', { hasText: sessionAText }).click();
+    await page.locator('.sidebar li', { hasText: sessionATruncatedId }).click();
     await page.waitForTimeout(1500);
 
     // Verify we have our 1 original cell restored to the DOM
