@@ -1,4 +1,4 @@
-import os, pty, sys, select, json, struct, termios, fcntl
+import os, pty, sys, select, json, struct, termios, fcntl, time
 
 def set_winsize(fd, row, col, xpix=0, ypix=0):
     winsize = struct.pack("HHHH", row, col, xpix, ypix)
@@ -10,9 +10,21 @@ if pid == 0:
         os.close(3)
     except:
         pass
-    os.execv(sys.argv[1], sys.argv[1:])
+    # Set a sensible default size before execv
+    set_winsize(sys.stdout.fileno(), 24, 80)
+    try:
+        os.execv(sys.argv[1], sys.argv[1:])
+    except Exception as e:
+        sys.stderr.write(f"EXECV FAILED: {e}\n")
+        sys.exit(1)
 else:
     # 0 = stdin, fd = pty, 3 = resize pipe
+    set_winsize(fd, 24, 80)
+    try:
+        os.stat(3)
+    except OSError:
+        sys.stderr.write("FD 3 NOT OPEN\n")
+        sys.exit(1)
     fds = [0, fd, 3]
     try:
         while fds:

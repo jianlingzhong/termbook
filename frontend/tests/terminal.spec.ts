@@ -22,15 +22,16 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('renders notebook interface', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
   await expect(page.locator('.sidebar h2', { hasText: 'Command History' })).toBeAttached();
   await expect(page.locator('.top-header')).toBeAttached();
-  await expect(page.locator('.notebook-cell')).toHaveCount(0);
+  // We now have 1 persistent interactive cell, so we count only command cells
+  await expect(page.locator('.notebook-cell:not(.interactive-cell):not(.interactive-cell)')).toHaveCount(0);
 });
 
 test('can execute basic command', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   // wait for global input to be ready
@@ -41,13 +42,13 @@ test('can execute basic command', async ({ page }) => {
   await input.press('Enter');
 
   // Verify a new cell has been created, meaning the process finished successfully
-  const cells = page.locator('.notebook-cell');
+  const cells = page.locator('.notebook-cell:not(.interactive-cell)');
   await expect(cells).toHaveCount(1, { timeout: 15000 });
 });
 
 test('tui alternate screen opens overlay modal', async ({ page }) => {
 
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   // wait for global input to be ready
@@ -66,7 +67,7 @@ test('tui alternate screen opens overlay modal', async ({ page }) => {
 });
 
 test('tui alternate screen exit renders snapshot', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   const input = page.locator('.chat-input-wrapper input[type="text"]');
@@ -91,7 +92,7 @@ test('tui alternate screen exit renders snapshot', async ({ page }) => {
 });
 
 test('tui terminal is focused on open', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   await page.evaluate(() => {
@@ -105,7 +106,7 @@ test('tui terminal is focused on open', async ({ page }) => {
 });
 
 test('focus returns to global input after tui exit', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   const globalInput = page.locator('.chat-input-wrapper input[type="text"]');
@@ -127,7 +128,7 @@ test('focus returns to global input after tui exit', async ({ page }) => {
 });
 
 test('ghost text aligns with input field regardless of prompt length', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   const input = page.locator('.chat-input-wrapper input[type="text"]');
@@ -148,7 +149,7 @@ test('ghost text aligns with input field regardless of prompt length', async ({ 
 });
 
 test('snapshots are preserved after session switch (re-render)', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   // Grab the specific session node that is currently ACTIVE to avoid StrictMode double-mount issues
@@ -180,7 +181,7 @@ test('snapshots are preserved after session switch (re-render)', async ({ page }
 });
 
 test('long output snapshots are scrollable within the cell', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   // Simulate a command with many lines of output
@@ -206,7 +207,7 @@ test('long output snapshots are scrollable within the cell', async ({ page }) =>
 });
 
 test('cells maintain their size and do not shrink when many are added', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   const input = page.locator('.chat-input-wrapper input[type="text"]');
@@ -220,7 +221,7 @@ test('cells maintain their size and do not shrink when many are added', async ({
   }
 
   // Get the height of the first cell
-  const firstCell = page.locator('.notebook-cell').first();
+  const firstCell = page.locator('.notebook-cell:not(.interactive-cell)').first();
   const firstCellHeader = firstCell.locator('.cell-header');
   const initialHeaderHeight = await firstCellHeader.boundingBox().then(b => b?.height);
 
@@ -248,7 +249,7 @@ test('cells maintain their size and do not shrink when many are added', async ({
 });
 
 test('cell displays executable pwd breadcrumb', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   const input = page.locator('.chat-input-wrapper input[type="text"]');
@@ -265,7 +266,7 @@ test('cell displays executable pwd breadcrumb', async ({ page }) => {
 });
 
 test('empty output commands collapse the cell output area', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   const input = page.locator('.chat-input-wrapper input[type="text"]');
@@ -274,7 +275,7 @@ test('empty output commands collapse the cell output area', async ({ page }) => 
   await input.press('Enter');
 
   // Wait for it to be done (snapshot generated)
-  const cell = page.locator('.notebook-cell').first();
+  const cell = page.locator('.notebook-cell:not(.interactive-cell)').first();
   const cellOutput = cell.locator('.cell-output');
 
   // Should not be visible or should be shrunken
@@ -282,7 +283,7 @@ test('empty output commands collapse the cell output area', async ({ page }) => 
 });
 
 test('tui active badge appears during tui mode', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   await page.evaluate(() => {
@@ -304,7 +305,7 @@ test('tui active badge appears during tui mode', async ({ page }) => {
 });
 
 test('history sidebar has import and export buttons', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   const exportBtn = page.locator('button:has-text("Export")');
@@ -315,7 +316,7 @@ test('history sidebar has import and export buttons', async ({ page }) => {
 });
 
 test('pty output queuing prevents bleed between commands', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   const globalInput = page.locator('.chat-input-wrapper input[type="text"]');
@@ -333,25 +334,25 @@ test('pty output queuing prevents bleed between commands', async ({ page }) => {
   await page.waitForTimeout(3000);
 
   // Cell 1 should ONLY have Background Done
-  const cell1Output = page.locator('.notebook-cell').nth(0).locator('.snapshot-output');
+  const cell1Output = page.locator('.notebook-cell:not(.interactive-cell)').nth(0).locator('.snapshot-output');
   await expect(cell1Output).toContainText('Background Done');
   await expect(cell1Output).not.toContainText('Foreground Done');
 
   // Cell 2 should ONLY have Foreground Done
-  const cell2Output = page.locator('.notebook-cell').nth(1).locator('.snapshot-output');
+  const cell2Output = page.locator('.notebook-cell:not(.interactive-cell)').nth(1).locator('.snapshot-output');
   await expect(cell2Output).toContainText('Foreground Done');
   await expect(cell2Output).not.toContainText('Background Done');
 });
 
 test('tui modal injects pure cyan cursor theme for normal mode', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   // Execute a command to create at least one cell (which will have ID 1)
   const input = page.locator('.chat-input-wrapper input[type="text"]');
   await input.fill('echo "triggering tui"');
   await input.press('Enter');
-  await expect(page.locator('.notebook-cell')).toHaveCount(1, { timeout: 10000 });
+  await expect(page.locator('.notebook-cell:not(.interactive-cell)')).toHaveCount(1, { timeout: 10000 });
 
   // Trigger TUI
   await page.evaluate(() => {
@@ -376,7 +377,7 @@ test('tui modal injects pure cyan cursor theme for normal mode', async ({ page }
   });
 
   // The last notebook cell should contain the snapshot with our cyan background
-  const finalSnapshot = page.locator('.notebook-cell').last().locator('.snapshot-output');
+  const finalSnapshot = page.locator('.notebook-cell:not(.interactive-cell)').last().locator('.snapshot-output');
   await expect(finalSnapshot).toContainText('block');
 
   // Verify the HTML string contains our specific hex code for the cursor
@@ -385,7 +386,7 @@ test('tui modal injects pure cyan cursor theme for normal mode', async ({ page }
 });
 
 test('manual terminal input keystrokes generate snapshot cells', async ({ page }) => {
-  await page.goto('http://localhost:5173/?new_session=true');
+  await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
   // Trigger an initial cell to get a terminal instance attached to the DOM
@@ -393,7 +394,10 @@ test('manual terminal input keystrokes generate snapshot cells', async ({ page }
   await globalInput.fill('echo "init"');
   await globalInput.press('Enter');
 
-  // Wait for the first xterm instance to appear
+  // Wait for the first xterm instance to appear and finish running
+  const firstCell = page.locator('.notebook-cell:not(.interactive-cell)').first();
+  await expect(firstCell).not.toHaveClass(/active-cell/, { timeout: 10000 });
+  
   const xtermTextarea = page.locator('.xterm-helper-textarea').first();
   await xtermTextarea.waitFor({ state: 'attached', timeout: 10000 });
 
@@ -404,17 +408,14 @@ test('manual terminal input keystrokes generate snapshot cells', async ({ page }
   await page.keyboard.type('echo "manual_test_xyz987"');
   await page.keyboard.press('Enter');
 
-  // Allow time for the execution, websocket broadcast, and handleCreateSnapshot (500ms + margin)
-  await page.waitForTimeout(2000);
-
   // Assert that a NEW snapshot block was created for the manual input
   // There should be at least 2 cells now (init + manual_test_xyz987)
   const cellOutputs = page.locator('.cell-output');
-  await expect(cellOutputs).toHaveCount(2, { timeout: 10000 });
+  await expect(cellOutputs).toHaveCount(2, { timeout: 15000 });
 
   const lastCellOutput = cellOutputs.last();
   await lastCellOutput.waitFor({ state: 'visible', timeout: 15000 });
-  const outputText = await lastCellOutput.textContent();
+  const outputText = await lastCellOutput.locator('.xterm-rows, .snapshot-output').textContent();
 
   // Verify the snapshot successfully captured the manually executed command's output
   expect(outputText).toContain('manual_test_xyz987');

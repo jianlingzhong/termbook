@@ -11,7 +11,7 @@ test.describe('Debug Logging System', () => {
 
   test('validates backend and frontend append-only debug logs', async ({ page }) => {
     // 1. Navigate to Termbook
-    await page.goto('http://localhost:5174/');
+    await page.goto('http://localhost:4000/');
 
     // 2. Wait for the frontend active badge/connection
     await page.waitForSelector('.pwd-breadcrumb', { state: 'visible' });

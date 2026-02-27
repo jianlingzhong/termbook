@@ -13,7 +13,13 @@
   - **NEVER** use `pkill -f "node"`, `pkill -f "vite"`, or `killall`. These commands destroy the user's IDE backends, unrelated local projects, and other vital background services.
   - **NEVER** use `kill -9` unless legally stopping a process fails, as it causes severe data corruption and orphaned memory leaks (especially for Playwright headless browsers).
   - **ALWAYS** target specific PIDs occupying a port using `lsof -ti :PORT | xargs kill`, or gracefully shut down services using their direct interface (like sending SIGTERM).
-- **Process Management via mprocs**: `mprocs` is used to manage long-running backend and frontend processes. **CRITICAL: DO NOT start or restart `mprocs` or the dev servers yourself (unless explicitly instructed).** Assume the user is running `mprocs` or their dev servers in a separate terminal. Your restarts will collide with theirs and lock the ports. Hot-reloading handles your code changes automatically. If you suspect a dev server is deadlocked and a full restart is genuinely required, you MUST **stop and ask the user** to execute the restart manually.
+- **Process Management via manage_debug_servers.py**: This script is the **OFFICIAL** method for managing dev servers.
+  - **Start**: `python3 manage_debug_servers.py start`
+  - **Stop**: `python3 manage_debug_servers.py stop`
+  - **Restart**: `python3 manage_debug_servers.py restart` (Use `--clear-logs` to wipe logs)
+  - **Status**: `python3 manage_debug_servers.py status`
+  - **Rule**: DO NOT use `mprocs` or manual `npm run dev` unless explicitly debugging startup issues interactively. **ALWAYS** use this script to ensure ports are cleared and logs are properly rotated.
+- **PTY Environment Standardization**: For consistent Nvim/Vim rendering, ALWAYS set `COLUMNS=80` and `LINES=24` in the `spawn` environment and set a matching winsize immediately on fork in the PTY wrapper. Many TUIs will fail to render or "blank screen" if they detect a 0x0 terminal on boot.
 - **Renaming Integrity**: After refactoring or renaming functions, perform a global `grep` search for the old string. LSPs may miss references in JSX props or event handlers.
 
 ## Debugging & Logging Protocols
@@ -29,3 +35,17 @@
 - **Dynamic ghost text**: When implementing ghost text for auto-completion, ensure its horizontal position is dynamically calculated or reactively bound to the input's actual starting position, accounting for variable-width prefixes.
 - **Buffer Persistence**: For terminal-like components, ensure snapshots of output buffers are persisted in a higher-level state (e.g., App or Session state) rather than just component-local state. This prevents data loss during re-renders or session switches.
 - **Full Buffer Snapshots**: When generating HTML snapshots of terminal output, ensure the entire relevant buffer is serialized, not just the active viewport, to allow for post-execution scrolling and review.
+
+## Nvim & TUI modal state management
+
+- **Backend-Driven TUI State**: Do not rely on the frontend to detect TUIs via string matching on raw chunks. Backend MUST track `isTuiActive` by scanning a `tailBuf` for `\x1b[?1049h` (enter) and `\x1b[?1049l` (exit). Send explicit `tui_enter`/`tui_exit` messages to the frontend.
+- **Chunk-Agnostic Streaming**: PTY output is often split mid-sequence. Use a `sentPos` pointer against a persistent `tailBuf` to ensure that partial escape sequences are held back until complete, preventing "visual leakage" of raw control codes into the UI.
+- **TUI Element Lifecycle**: When transitioning between Notebook view and TUI Modal, DO NOT call `terminal.open(el)` again. This resets internal state. Instead, append the existing `terminal.element` to the new container (`el.appendChild(terminal.element)`). This preserves the alternate screen buffer and scrollback.
+- **TUI-Aware Prompt Detection**: Disable or ignore shell prompt detection (OSC 133;D) while `isTuiActive` is true. TUIs may output data that accidentally triggers prompt regexes, leading to premature command termination and data leakage.
+- **FitAddon Reliability**: `fitAddon.fit()` is flaky if the container isn't fully reflowed. Implement a staged fit sequence (50ms, 250ms, 1000ms) on TUI mount. Avoid `ResizeObserver` for terminals as it frequently triggers infinite layout loops.
+
+## Reliable TUI Testing (Playwright)
+
+- **Buffer Inspection over DOM Scraping**: To verify Nvim state, use `page.evaluate` to inspect `terminal.buffer.active`. Check `buffer.active.type` (normal vs alternate) and `buffer.active.getLine(i).translateToString()` for specific markers like `~` or `[No Name]`. This is 100x more reliable than `expect(locator).toContainText()`.
+- **TUI Wake-up sequence**: Headless TUIs sometimes fail to draw the first frame. If a test is stuck on a blank TUI screen, send an `Escape` keypress to "nudge" the application into a redraw cycle before performing assertions.
+- **Zero Residual Verification**: Always run a shell command (like `ls`) immediately after a TUI session in your tests to verify that the alternate screen was correctly cleaned up and no TUI data leaked into standard output.
