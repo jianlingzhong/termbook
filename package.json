@@ -1,0 +1,8 @@
+{
+  "name": "termbook-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "bash scripts/run_tests.sh"
+  }
+}

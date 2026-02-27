@@ -29,16 +29,26 @@ playwright-report/
 test_output.log
 mprocs.log
 
-# Temporary/Session files
-backend/termbook_bashrc_sess-*
-frontend/test-results/
-frontend/playwright-report/
-backend.pid
-backend/*.log
-backend/test_*.js
-backend/*.test.js
-
 # OS generated files
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Project Specific Junk
+*.log
+*.tmp
+*.txt
+backend/termbook_bashrc_*
+frontend/screenshots/
+test-results/
+playwright-report/
+blob-report/
+AUDIT_REPORT.md
+CHECKLIST_AUDIT.md
+frontend-*.log
+backend-*.log
+backend.pid
+mprocs.log
+desc_*
+temp_desc*
+massive_audit.txt

@@ -5,646 +5,288 @@ import { Terminal } from 'xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import 'xterm/css/xterm.css';
-import { TerminalSquare, History, Plus, Folder, Hash } from 'lucide-react';
+import { TerminalSquare, Plus, Folder, Hash } from 'lucide-react';
 import './index.css';
 
 function App() {
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [config, setConfig] = useState({ appName: 'Termbook', appTitle: 'TERMBOOK' });
-
   const [sessionCells, setSessionCells] = useState({});
   const [sessionPwds, setSessionPwds] = useState({});
   const [sessionSockets, setSessionSockets] = useState({});
   const [sessionTuiStates, setSessionTuiStates] = useState({});
-  const [sessionQueues, setSessionQueues] = useState({});
-  const sessionRunning = useRef({}); // Track run state with ref for WS closure safety
-  // Force update hack to let the UI re-render when sessionRunning changes (if needed elsewhere)
-  const [, forceUpdate] = useState({});
+  const [sessionRunning, setSessionRunning] = useState({});
+  const [suggestion, setSuggestion] = useState('');
+  const [inputValue, setInputValue] = useState('');
+  
+  const sessionRunningRef = useRef({});
+  const sessionSocketsRef = useRef({});
+  const creatingSockets = useRef(new Set());
   const sessionTerminals = useRef({});
-  const manualInputBuffers = useRef({}); // Track manual keystrokes per session
-
-  const [history, setHistory] = useState([]);
-
-  const [globalInput, setGlobalInput] = useState('');
-  const [ghostText, setGhostText] = useState('');
-  const scrollRef = useRef(null);
   const inputRef = useRef(null);
+  const scrollRef = useRef(null);
 
-  const remoteLog = (msg) => {
-    fetch('/api/frontend-log', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg })
-    }).catch(() => { }); // Fire and forget
-  };
+  useEffect(() => { sessionRunningRef.current = sessionRunning; }, [sessionRunning]);
+  useEffect(() => { sessionSocketsRef.current = sessionSockets; }, [sessionSockets]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const forceNew = params.get('new_session') === 'true';
+    if (scrollRef.current) {
+        setTimeout(() => {
+            if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }, 200);
+    }
+  }, [sessionCells, activeSessionId]);
 
-    remoteLog(`==== FRONTEND RELOADED ====`);
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const forceNew = urlParams.get('new_session') === 'true';
 
-    fetch('/api/sessions')
-      .then(res => res.json())
-      .then(data => {
-        if (!forceNew && data.sessions && data.sessions.length > 0) {
-          setSessions(data.sessions);
-          setActiveSessionId(data.sessions[0].id);
-        } else {
-          createNewSession();
+    fetch('/api/sessions').then(res => res.json()).then(data => {
+      if (!forceNew && data.sessions && data.sessions.length > 0) {
+        setSessions(data.sessions);
+        setActiveSessionId(data.sessions[0].id);
+        data.sessions.forEach(s => {
+          if (s.pwd) setSessionPwds(prev => ({ ...prev, [s.id]: s.pwd }));
+          if (s.cells) {
+              const cells = s.cells.map(c => {
+                  if (c.output && !c.snapshot) {
+                      const cleanOutput = c.output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+                      return { ...c, snapshot: `<div style="color: #e0e5ff; font-family: 'JetBrains Mono', monospace; white-space: pre-wrap; font-size: 13px; line-height: 1.5;">${cleanOutput}</div>` };
+                  }
+                  return c;
+              });
+              setSessionCells(prev => ({ ...prev, [s.id]: cells }));
+          }
+        });
+      } else { 
+        createNewSession(); 
+        if (forceNew) {
+            window.history.replaceState({}, '', window.location.pathname);
         }
-      })
-      .catch(() => createNewSession());
-
-    fetch('/api/config')
-      .then(res => res.json())
-      .then(data => setConfig(data))
-      .catch(console.error);
-
-    fetch('/api/history')
-      .then(res => res.json())
-      .then(data => setHistory(data.history || []))
-      .catch(console.error);
-
-    return () => {
-      Object.values(sessionTerminals.current).forEach(t => t.terminal.dispose());
-    };
+      }
+    }).catch(() => createNewSession());
+    fetch('/api/config').then(res => res.json()).then(data => setConfig(data));
   }, []);
 
-  const getOrCreateTerminal = (sessionId) => {
-    if (sessionTerminals.current[sessionId]) return sessionTerminals.current[sessionId];
-
-    const terminal = new Terminal({
-      theme: {
-        background: '#1a1b26',
-        foreground: '#c0caf5',
-        cursor: '#00ecec',
-        cursorAccent: '#1a1b26',
-      },
-      convertEol: true,
-      cursorBlink: false,
-      cursorStyle: 'block',
-      cursorInactiveStyle: 'block',
-      fontFamily: '"JetBrains Mono", monospace',
-      fontSize: 14,
-      allowProposedApi: true,
-      scrollback: 5000
-    });
-
-    const fitAddon = new FitAddon();
-    const serializeAddon = new SerializeAddon();
-    terminal.loadAddon(fitAddon);
-    terminal.loadAddon(serializeAddon);
-
-    sessionTerminals.current[sessionId] = { terminal, fitAddon, serializeAddon };
-    return sessionTerminals.current[sessionId];
-  };
-
-  const handleCreateSnapshot = (sessionId, cellId) => {
-    const termData = sessionTerminals.current[sessionId];
-    if (!termData) return "";
-
-    const { terminal } = termData;
-    const buffer = terminal.buffer.active;
-    const lines = [];
-
-    // Efficiently find non-empty lines in buffer
-    for (let i = 0; i < buffer.length; i++) {
-      const line = buffer.getLine(i);
-      if (line) {
-        lines.push(line.translateToString(false));
-      }
-    }
-
-    let lastNonEmpty = -1;
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (lines[i].trim().length > 0) {
-        lastNonEmpty = i;
-        break;
-      }
-    }
-
-    if (lastNonEmpty === -1) {
-      remoteLog(`handleCreateSnapshot [${sessionId}]: cellId=${cellId}, buffer is empty or all whitespace.`);
-      return "";
-    }
-
-    const content = lines.slice(0, lastNonEmpty + 1).join('\n');
-    remoteLog(`handleCreateSnapshot [${sessionId}]: cellId=${cellId}, lines extracted=${lastNonEmpty + 1}`);
-
-    // Escape HTML characters to prevent XSS and rendering issues
-    const escapedContent = content
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-
-    return `<pre style="margin:0; font-family:var(--font-mono); color:var(--text-primary); white-space:pre-wrap; word-break:break-all;">${escapedContent}</pre>`;
-  };
-
   useEffect(() => {
-    if (!activeSessionId) return;
-    const queue = sessionQueues[activeSessionId] || [];
-    const isRunning = sessionRunning.current[activeSessionId];
-    const ws = sessionSockets[activeSessionId];
+    const handleCloseDebug = () => {
+        setSessionTuiStates({});
+    };
+    window.addEventListener('close-tui-debug', handleCloseDebug);
+    return () => window.removeEventListener('close-tui-debug', handleCloseDebug);
+  }, []);
 
-    if (queue.length > 0 && !isRunning && ws && ws.readyState === WebSocket.OPEN) {
-      const nextCmd = queue[0];
-      sessionRunning.current[activeSessionId] = true;
-      forceUpdate({}); // Trigger a re-render if needed
-      ws.send(JSON.stringify({ type: 'start', data: nextCmd.command, cellId: nextCmd.id }));
-    }
-  }, [activeSessionId, sessionQueues, sessionSockets]);
-
-  useEffect(() => {
-    if (!activeSessionId) return;
-    const sessionId = activeSessionId;
-
-    if (!sessionSockets[sessionId]) {
-      const wsUrl = `ws://${window.location.host}/ws`;
-      const ws = new WebSocket(wsUrl);
-      const { terminal } = getOrCreateTerminal(sessionId);
-
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ type: 'join_session', sessionId: sessionId }));
-      };
-
-      ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'session_init') {
-          remoteLog(`WS session_init [${sessionId}]: pwd=${msg.pwd}, isReady=${msg.isReady}`);
-          setSessionPwds(prev => ({ ...prev, [sessionId]: msg.pwd }));
-        } else if (msg.type === 'output') {
-          remoteLog(`WS output [${sessionId}]: cellId=${msg.cellId}, dataLength=${msg.data.length}`);
-          terminal.write(msg.data);
-          if (msg.data.includes('\x1b[?1049h')) {
-            remoteLog(`WS output [${sessionId}]: Detected TUI ENTER (1049h)`);
-            setSessionTuiStates(prev => ({
-              ...prev,
-              [sessionId]: { ws, cellId: msg.cellId }
-            }));
-          }
-          if (msg.data.includes('\x1b[?1049l')) {
-            remoteLog(`WS output [${sessionId}]: Detected TUI EXIT (1049l)`);
-            handleTuiExit(sessionId);
-          }
-        } else if (msg.type === 'tui_exit') {
-          remoteLog(`WS tui_exit explicit message [${sessionId}]`);
-          handleTuiExit(sessionId);
-        } else if (msg.type === 'exit') {
-          remoteLog(`WS exit [${sessionId}]: exitCode=${msg.exitCode}, cellId=${msg.cellId}`);
-
-          // Only process exit if we are currently running something
-          if (!sessionRunning.current[sessionId]) {
-            remoteLog(`WS exit [${sessionId}]: Ignoring exit because sessionRunning is false.`);
-            return;
-          }
-          // Bypass xterm's write callback which can be unpredictably frozen
-          // if the DOM is obscured or transitioning.
-          setTimeout(() => {
-            const snapshot = handleCreateSnapshot(sessionId, msg.cellId);
-
-              setSessionCells(prev => {
-                const cells = prev[sessionId] || [];
-                const updated = cells.map(c => c.id === msg.cellId ? { ...c, snapshot: snapshot || "" } : c);
-                return { ...prev, [sessionId]: updated };
-              });
-
-              if (msg.pwd) {
-              setSessionPwds(prev => ({ ...prev, [sessionId]: msg.pwd }));
-            }
-
-            setSessionTuiStates(prev => {
-                const newState = { ...prev };
-                delete newState[sessionId];
-                return newState;
-              });
-
-              terminal.reset();
-
-              // Unlock session AFTER snapshot is safely generated and terminal is reset
-              // This strictly prevents new commands from rushing the PTY and wiping the buffer!
-              sessionRunning.current[sessionId] = false;
-              setSessionQueues(prev => {
-                const q = prev[sessionId] || [];
-                return { ...prev, [sessionId]: q.slice(1) };
-              });
-              forceUpdate({});
-
-            }, 250); // 250ms is plenty for the xterm buffer to be populated natively
-          // Removed the wrapper write block
+  const switchSession = (sessionId) => {
+    setActiveSessionId(sessionId);
+    setInputValue('');
+    setSuggestion('');
+    
+    fetch(`/api/sessions/${sessionId}`).then(res => res.json()).then(data => {
+        if (data.cells) {
+            const cells = data.cells.map(c => {
+                if (c.output && !c.snapshot) {
+                    const cleanOutput = c.output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+                    return { ...c, snapshot: `<div style="color: #e0e5ff; font-family: 'JetBrains Mono', monospace; white-space: pre-wrap; font-size: 13px; line-height: 1.5;">${cleanOutput}</div>` };
+                }
+                return c;
+            });
+            setSessionCells(prev => ({ ...prev, [sessionId]: cells }));
         }
-      };
-
-      terminal.onData(data => {
-        if (ws.readyState === WebSocket.OPEN) {
-          // Track keystrokes for manual snapshot parsing
-          const isRunning = sessionRunning.current[sessionId];
-
-          if (!isRunning) {
-            let buffer = manualInputBuffers.current[sessionId] || '';
-
-            // Handle backspace/delete
-            if (data === '\x7f' || data === '\b') {
-              buffer = buffer.slice(0, -1);
-              manualInputBuffers.current[sessionId] = buffer;
-              ws.send(JSON.stringify({ type: 'input', data }));
-            }
-            // Handle Enter (\r or \n) to trigger a tracked execution
-            else if (data === '\r' || data === '\n') {
-              const cmd = buffer.trim();
-              manualInputBuffers.current[sessionId] = ''; // clear
-
-              if (cmd.length > 0) {
-                // Spawn a cell for the manual command
-                const newCellId = (sessionCells[sessionId]?.length || 0) + 1;
-
-                setSessionCells(prev => {
-                  const current = prev[sessionId] || [];
-                  return {
-                    ...prev,
-                    [sessionId]: [...current, {
-                      id: newCellId,
-                      command: cmd,
-                      executablePwd: sessionPwds[sessionId] || '~',
-                      snapshot: null
-                    }]
-                  };
-                });
-
-                // Add to history
-                setHistory(prev => {
-                  if (!prev.includes(cmd)) return [cmd, ...prev].slice(0, 1000);
-                  return prev;
-                });
-
-                // Lock the session
-                sessionRunning.current[sessionId] = true;
-                forceUpdate({});
-
-                // Emit START instead of input so the backend assigns the cellId lock
-                ws.send(JSON.stringify({ type: 'start', data: cmd, cellId: newCellId }));
-              } else {
-                // Empty enter, just pass it through
-                ws.send(JSON.stringify({ type: 'input', data }));
-              }
-            }
-            // Normal character
-            else {
-              // Ignore control sequences like arrows for the strict buffer for now,
-              // just track raw printable text to name the cell.
-              if (!data.startsWith('\x1b')) {
-                buffer += data;
-              }
-              manualInputBuffers.current[sessionId] = buffer;
-              // Always pass the raw input through to the PTY
-              ws.send(JSON.stringify({ type: 'input', data }));
-            }
-          } else {
-            // Already running something, pass through raw input
-            ws.send(JSON.stringify({ type: 'input', data }));
-          }
-        }
-      });
-
-      terminal.onResize(({ cols, rows }) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-        }
-      });
-
-      setSessionSockets(prev => ({ ...prev, [sessionId]: ws }));
-    }
-  }, [activeSessionId, sessionSockets]);
+        if (data.pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: data.pwd }));
+        setTimeout(() => inputRef.current?.focus(), 100);
+    }).catch(() => {});
+  };
 
   const createNewSession = () => {
     const id = "sess-" + Math.random().toString(36).substring(2, 9);
     setSessions(prev => [...prev, { id, status: 'initializing' }]);
     setSessionCells(prev => ({ ...prev, [id]: [] }));
-    setSessionQueues(prev => ({ ...prev, [id]: [] }));
     setActiveSessionId(id);
   };
 
-  const activeCells = sessionCells[activeSessionId] || [];
-  const activeWs = sessionSockets[activeSessionId];
-  const activePwd = sessionPwds[activeSessionId] || '~';
-  const activeTerminalData = activeSessionId ? getOrCreateTerminal(activeSessionId) : null;
-  const activeTuiState = sessionTuiStates[activeSessionId];
+  const getOrCreateTerminal = (sessionId, cellId = null) => {
+    const key = cellId ? `${sessionId}-${cellId}` : sessionId;
+    if (sessionTerminals.current[key]) return sessionTerminals.current[key];
+    
+    const terminal = new Terminal({
+      theme: { background: '#000000', foreground: '#e0e5ff', cursor: '#00ecec', cursorAccent: '#1a1b26' },
+      convertEol: true, cursorBlink: false, cursorStyle: 'block',
+      fontFamily: '"JetBrains Mono", monospace', fontSize: 13, allowProposedApi: true,
+      rows: 24, cols: 80,
+      rendererType: 'dom' // Ensure text is visible to Playwright
+    });
+    if (typeof document !== 'undefined') {
+        const hiddenDiv = document.createElement('div');
+        hiddenDiv.style.position = 'absolute';
+        hiddenDiv.style.left = '-9999px';
+        hiddenDiv.style.visibility = 'hidden';
+        // document.body.appendChild(hiddenDiv); // Don't even need to append
+        terminal.open(hiddenDiv);
+    }
 
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      if (scrollRef.current) {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      }
+
+    const fitAddon = new FitAddon();
+    const serializeAddon = new SerializeAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.loadAddon(serializeAddon);
+    
+    terminal.onData(data => { 
+        if (sessionRunningRef.current[sessionId]) {
+            const ws = sessionSocketsRef.current[sessionId];
+            if (ws) ws.send(JSON.stringify({ type: 'input', data })); 
+        }
     });
 
-    if (scrollRef.current) {
-      observer.observe(scrollRef.current, { childList: true, subtree: true, characterData: true });
-    }
-    return () => observer.disconnect();
-  }, [activeSessionId, activeCells]);
-
-  useEffect(() => {
-    if (globalInput.length > 0) {
-      const match = history.find(cmd => cmd.startsWith(globalInput));
-      if (match && match !== globalInput) {
-        setGhostText(match.slice(globalInput.length));
-      } else {
-        setGhostText('');
-      }
-    } else {
-      setGhostText('');
-    }
-  }, [globalInput, history]);
-
-  const handleDeleteSession = async (e, id) => {
-    e.stopPropagation();
-    try {
-      const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setSessions(prev => prev.filter(s => s.id !== id));
-        setSessionCells(prev => {
-          const newState = { ...prev };
-          delete newState[id];
-          return newState;
-        });
-        if (sessionTerminals.current[id]) {
-          sessionTerminals.current[id].terminal.dispose();
-          delete sessionTerminals.current[id];
-        }
-        if (activeSessionId === id) {
-          setActiveSessionId(null);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to delete session:', err);
-    }
-  };
-
-  const handleGlobalInputKeyDown = (e) => {
-    if (e.key === 'ArrowRight' && ghostText) {
-      e.preventDefault();
-      setGlobalInput(globalInput + ghostText);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (!globalInput.trim() || !activeSessionId) return;
-
-      const cmd = globalInput.trim();
-
-      if (!history.includes(cmd)) {
-        setHistory(prev => [cmd, ...prev].slice(0, 1000));
-      }
-
-      const newCellId = (sessionCells[activeSessionId]?.length || 0) + 1;
-
-      setSessionCells(prev => {
-        const current = prev[activeSessionId] || [];
-        return {
-          ...prev,
-          [activeSessionId]: [...current, {
-            id: newCellId,
-            command: cmd,
-            executablePwd: activePwd,
-            snapshot: null
-          }]
-        };
-      });
-
-      setSessionQueues(prev => {
-        const current = prev[activeSessionId] || [];
-        return {
-          ...prev,
-          [activeSessionId]: [...current, { id: newCellId, command: cmd }]
-        };
-      });
-
-      setGlobalInput('');
-      setGhostText('');
-
-      setTimeout(() => {
-        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      }, 50);
-    }
-  };
-
-  const handleTuiExit = (sessionId, testSnapshot) => {
-    setSessionTuiStates(prev => {
-      const tuiState = prev[sessionId];
-      if (tuiState && tuiState.cellId) {
-        const snapshot = handleCreateSnapshot(sessionId, tuiState.cellId);
-        if (snapshot !== null || testSnapshot) {
-          setSessionCells(cellsPrev => {
-            const cells = cellsPrev[sessionId] || [];
-            return {
-              ...cellsPrev,
-              [sessionId]: cells.map(c => c.id === tuiState.cellId ? { ...c, snapshot: testSnapshot || snapshot || "" } : c)
-            };
-          });
-        }
-        if (sessionTerminals.current[sessionId]) {
-          sessionTerminals.current[sessionId].terminal.reset();
-        }
-      }
-      const newState = { ...prev };
-      delete newState[sessionId];
-      return newState;
+    let lastResize = { cols: 0, rows: 0 };
+    terminal.onResize(({ cols, rows }) => {
+        if (cols === lastResize.cols && rows === lastResize.rows) return;
+        lastResize = { cols, rows };
+        const ws = sessionSocketsRef.current[sessionId];
+        if (ws) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
     });
+
+    sessionTerminals.current[key] = { terminal, fitAddon, serializeAddon };
+    return sessionTerminals.current[key];
   };
 
-  // Focus recovery
-  useEffect(() => {
-    if (!activeTuiState && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [activeTuiState]);
-
-  // Expose directly to Playwright
-  useEffect(() => {
-    window.__TEST_TRIGGER_TUI_DETECT = () => {
-      setSessionTuiStates(prev => ({
-        ...prev,
-        [activeSessionId]: { ws: sessionSockets[activeSessionId], cellId: (sessionCells[activeSessionId]?.length || 1) }
-      }));
-    };
-    window.__TEST_TRIGGER_TUI_EXIT = (html) => handleTuiExit(activeSessionId, html);
-    return () => {
-      delete window.__TEST_TRIGGER_TUI_DETECT;
-      delete window.__TEST_TRIGGER_TUI_EXIT;
-    };
-  }, [activeSessionId, sessionSockets, sessionCells]);
-
-  const handleExportHistory = () => {
-    const dataBlob = new Blob([JSON.stringify(history, null, 2)], { type: 'application/json' });
-    const fileUrl = URL.createObjectURL(dataBlob);
-    const dlAnchorElem = document.createElement('a');
-    const fileName = (config.appName || 'termbook').toLowerCase() + '_history.json';
-    dlAnchorElem.setAttribute("href", fileUrl);
-    dlAnchorElem.setAttribute("download", fileName);
-    dlAnchorElem.click();
-    URL.revokeObjectURL(fileUrl);
+  const handleCreateSnapshot = (sessionId, cellId) => {
+    const termData = sessionTerminals.current[`${sessionId}-${cellId}`];
+    if (!termData) return "";
+    let html = termData.serializeAddon.serializeAsHTML();
+    const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+    if (bodyMatch && bodyMatch[1]) html = bodyMatch[1];
+    return html.replace(/color:\s*#000000/g, 'color: #e0e5ff')
+               .replace(/background-color:\s*#ffffff/g, 'background-color: transparent')
+               .replace(/background-color:\s*#ffff00/g, 'background-color: transparent')
+               .replace(/font-family:[^;]*/g, "font-family: 'JetBrains Mono', monospace")
+               .replace(/font-size:[^;]*/g, "font-size: 13px")
+               .replace(/line-height:[^;]*/g, "line-height: 1.5")
+               .replace(/(<div[^>]*>&nbsp;<\/div>\s*)+<\/body>/i, '</body>') // Trim trailing empty rows
+               .replace(/(<div[^>]*><span[^>]*>\s*<\/span><\/div>\s*)+<\/body>/i, '</body>'); // Trim alternative empty rows
   };
 
-  const handleImportHistory = (event) => {
-    const file = event.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const imported = JSON.parse(e.target.result);
-          if (Array.isArray(imported)) {
-            setHistory([...new Set([...imported, ...history])]);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const sessionId = activeSessionId;
+    if (!sessionSockets[sessionId] && !creatingSockets.current.has(sessionId)) {
+      creatingSockets.current.add(sessionId);
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const ws = new WebSocket(wsUrl);
+      
+      ws.onopen = () => {
+          ws.send(JSON.stringify({ type: 'join_session', sessionId }));
+      };
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'session_init') {
+          if (msg.pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: msg.pwd }));
+          if (msg.isTuiActive) {
+              setSessionTuiStates(prev => ({ ...prev, [sessionId]: { cellId: msg.activeCellId } }));
           }
-        } catch (error) {
-          console.error("Invalid history file");
+        } else if (msg.type === 'tui_enter') {
+            setSessionTuiStates(prev => ({ ...prev, [sessionId]: { cellId: msg.cellId } }));
+        } else if (msg.type === 'tui_exit') {
+            setSessionTuiStates(prev => { 
+                const n = {...prev}; 
+                delete n[sessionId]; 
+                return n; 
+            });
+            setTimeout(() => inputRef.current?.focus(), 100);
+        } else if (msg.type === 'output') {
+          const termData = getOrCreateTerminal(sessionId, msg.cellId);
+          termData.terminal.write(msg.data);
+        } else if (msg.type === 'exit') {
+          const { cellId, pwd } = msg;
+          const termData = getOrCreateTerminal(sessionId, cellId);
+          setTimeout(() => {
+            termData.terminal.write('', () => {
+              const snapshot = handleCreateSnapshot(sessionId, cellId);
+              setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshot } : c) }));
+              setSessionRunning(prev => ({ ...prev, [sessionId]: false }));
+              if (pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: pwd }));
+              setTimeout(() => inputRef.current?.focus(), 100);
+            });
+          }, 400);
         }
       };
-      reader.readAsText(file);
+      setSessionSockets(prev => ({ ...prev, [sessionId]: ws }));
+    }
+  }, [activeSessionId, sessionSockets]);
+
+  const handleCommand = (e) => {
+    if (e.key === 'Tab' && suggestion) {
+        e.preventDefault();
+        setInputValue(inputValue + suggestion);
+        setSuggestion('');
+        return;
+    }
+    if (e.key === 'Enter') {
+      const cmd = inputValue.trim();
+      if (!cmd || !activeSessionId) return;
+      const cellId = Date.now();
+      getOrCreateTerminal(activeSessionId, cellId);
+      setSessionCells(prev => ({ ...prev, [activeSessionId]: [...(prev[activeSessionId] || []), { id: cellId, command: cmd, executablePwd: sessionPwds[activeSessionId] }] }));
+      setSessionRunning(prev => ({ ...prev, [activeSessionId]: true }));
+      const ws = sessionSockets[activeSessionId];
+      if (ws) ws.send(JSON.stringify({ type: 'start', data: cmd, cellId }));
+      setInputValue('');
+      setSuggestion('');
     }
   };
 
+  useEffect(() => {
+    if (!inputValue || !activeSessionId) {
+        setSuggestion('');
+        return;
+    }
+    const currentHistory = (sessionCells[activeSessionId] || []).map(c => c.command).reverse();
+    const otherHistory = Object.values(sessionCells).flat().map(c => c.command).reverse();
+    const history = [...new Set([...currentHistory, ...otherHistory])];
+    const match = history.find(cmd => cmd.startsWith(inputValue) && cmd.length > inputValue.length);
+    setSuggestion(match ? match.substring(inputValue.length) : '');
+  }, [inputValue, activeSessionId, sessionCells]);
+
+  const activeTuiState = sessionTuiStates[activeSessionId];
   return (
     <div className="app-container">
       <div className="sidebar">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px' }}>
-          <TerminalSquare size={24} color="var(--accent-cyan)" />
-          <h1 style={{ fontSize: '16px', margin: 0, fontWeight: 600, letterSpacing: '0.5px' }}>{config.appTitle}</h1>
+        <div className="sidebar-header"><TerminalSquare size={24} color="var(--accent-cyan)" /><h1>{config.appTitle}</h1></div>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'12px'}}>
+            <h2>SESSIONS</h2>
+            <button onClick={createNewSession} style={{background:'none', border:'none', color:'var(--accent-cyan)', cursor:'pointer'}} title="New Session"><Plus size={16}/></button>
         </div>
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2>Sessions</h2>
-          <button onClick={createNewSession} style={{ padding: '4px', border: 'none' }} title="New Session">
-            <Plus size={14} />
-          </button>
-        </div>
-        <ul style={{ marginBottom: '24px' }}>
-          {sessions.map((s) => (
-            <li
-              key={s.id}
-              className={activeSessionId === s.id ? 'active' : ''}
-              onClick={() => setActiveSessionId(s.id)}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-                <Hash size={14} color={activeSessionId === s.id ? 'var(--accent-cyan)' : 'var(--text-muted)'} />
-                <span style={{ marginLeft: '8px' }}># {s.id.substring(0, 8)}</span>
-              </div>
-              <span
-                className="delete-session-btn"
-                onClick={(e) => handleDeleteSession(e, s.id)}
-                style={{ opacity: 0.6, fontSize: '14px', padding: '0 4px', cursor: 'pointer' }}
-              >
-                ×
-              </span>
-            </li>
-          ))}
-        </ul>
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2>Command History</h2>
-          <div style={{ display: 'flex', gap: '4px' }}>
-            <button onClick={handleExportHistory} style={{ padding: '2px 6px', fontSize: '10px' }}>Export</button>
-            <label className="button-label" style={{ padding: '2px 6px', fontSize: '10px' }}>
-              Import
-              <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportHistory} />
-            </label>
-          </div>
-        </div>
-        <ul style={{ flex: 1, overflowY: 'auto' }}>
-          {history.slice(0, 100).map((cmd, idx) => (
-            <li key={idx} title={cmd}>
-              <History size={14} color="var(--text-muted)" />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cmd}</span>
-            </li>
-          ))}
-        </ul>
+        <ul>{sessions.map(s => <li key={s.id} data-session-id={s.id} className={activeSessionId === s.id ? 'active' : ''} onClick={() => switchSession(s.id)}><Hash size={14}/><span># {s.id.substring(0,8)}</span></li>)}</ul>
       </div>
-
       <div className="main-area">
         <div className="top-header">
-          <div className="top-header-left">
-            <div className="pwd-breadcrumb" title={activePwd}>
-              <Folder size={14} color="var(--accent-cyan)" />
-              {(() => {
-                const parts = activePwd.split('/').filter(Boolean);
-                if (parts.length <= 4) return activePwd.split('/').filter(Boolean).map((part, i, arr) => (
-                  <React.Fragment key={i}>
-                    <span>{part}</span>
-                    <span className="pwd-separator">/</span>
-                  </React.Fragment>
-                ));
-                return (
-                  <>
-                    <span className="pwd-separator">.../</span>
-                    {parts.slice(-3).map((part, i, arr) => (
-                      <React.Fragment key={i}>
-                        <span>{part}</span>
-                        <span className="pwd-separator">/</span>
-                      </React.Fragment>
-                    ))}
-                  </>
-                );
-              })()}
-              {activePwd === '/' && <span>/</span>}
-            </div>
-          </div>
-          {activeTuiState && (
-            <div className="tui-active-badge">
-              <div className="pulse-dot"></div>
-              TUI MODE ACTIVE
-            </div>
-          )}
+           <div className="pwd-breadcrumb"><Folder size={14} color="var(--accent-cyan)" />{sessionPwds[activeSessionId] || '~'}</div>
+           {activeTuiState && <div className="tui-active-badge">TUI ACTIVE</div>}
         </div>
-
         <div className="notebook-content" ref={scrollRef}>
-          {activeCells.map((cell, idx) => (
-            <NotebookCell
-              key={`${activeSessionId}-${cell.id}`}
-              id={cell.id}
-              activeTerminal={activeTerminalData}
-              snapshot={cell.snapshot}
-              initialCommand={cell.command}
-              executablePwd={cell.executablePwd}
-              isTuiActive={!!activeTuiState}
-            />
+          {(sessionCells[activeSessionId] || []).map(c => (
+            <NotebookCell key={c.id} id={c.id} snapshot={c.snapshot} initialCommand={c.command} executablePwd={c.executablePwd} activeTerminal={getOrCreateTerminal(activeSessionId, c.id)} isRunning={sessionRunning[activeSessionId] && !c.snapshot} isTuiActive={activeTuiState?.cellId === c.id} />
           ))}
-          <div style={{ height: '80px', flexShrink: 0 }} />
+          <div style={{ height: '100px' }} />
         </div>
-
         <div className="chat-input-container">
           <div className="chat-input-wrapper">
-            <span className="pwd-prompt-prefix">
-              {activePwd === '~' || activePwd === '/' ? activePwd : activePwd.split('/').pop()}&nbsp;❯
-            </span>
-            <div className="input-with-ghost">
-              <input
-                ref={inputRef}
-                type="text"
-                value={globalInput}
-                onChange={(e) => setGlobalInput(e.target.value)}
-                onKeyDown={handleGlobalInputKeyDown}
-                placeholder="Enter terminal command..."
-                disabled={!!activeTuiState}
-                autoFocus
-              />
-              {ghostText && (
-                <div className="global-ghost-text">
-                  <span style={{ visibility: 'hidden' }}>{globalInput}</span>
-                  <span>{ghostText}</span>
-                </div>
-              )}
-            </div>
+            <span className="pwd-prompt-prefix">termbook <span className="prompt-arrow">❯</span></span>
+            {suggestion && <span className="ghost-suggestion-text">{inputValue}{suggestion}</span>}
+            <input 
+                ref={inputRef} 
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleCommand} 
+                placeholder={inputValue ? "" : "Enter terminal command..."} 
+                disabled={!!activeTuiState} 
+                autoFocus 
+            />
           </div>
         </div>
       </div>
-
-      {activeTuiState && (
-        <TuiModal
-          activeTerminal={activeTerminalData}
-          onClose={() => handleTuiExit(activeSessionId)}
-        />
-      )}
+      {activeTuiState && <TuiModal activeTerminal={getOrCreateTerminal(activeSessionId, activeTuiState.cellId)} />}
     </div>
   );
 }
