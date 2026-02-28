@@ -22,9 +22,18 @@
     "Does the command area expand to show multiple lines for long commands?",
     "Is there a scrollbar or indicator if the command is exceptionally long (exceeding max-height)?"
   ],
+  "screenshots/24_nvim_command_mode.png": [
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
+    "Is the screen free of visual artifacts or corruption?",
+    "Is the screen free of visual corruption (no overlapping text or tofu blocks)?",
+    "Is there a ':' prompt at the bottom left?"
+  ],
   "screenshots/15_nvim_normal_cursor.png": [
-    "Is the background solid black with no ghosting from the main area?",
-    "Does the TUI window properly fill the entire screen?",
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
     "Is the screen free of visual artifacts or corruption?",
     "Is the nvim status bar visible at the bottom?",
     "Is there a solid CYAN BLOCK cursor at the start of the first line?",
@@ -61,8 +70,9 @@
     "Is the screen free of visual corruption?"
   ],
   "screenshots/21_nvim_move_l.png": [
-    "Is the background solid black with no ghosting from the main area?",
-    "Does the TUI window properly fill the entire screen?",
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
     "Is the screen free of visual artifacts or corruption?",
     "Is the block cursor positioned on a character other than the first one (moved right)?"
   ],
@@ -127,15 +137,17 @@
     "Is the screen free of visual corruption?"
   ],
   "screenshots/18_nvim_esc_normal.png": [
-    "Is the background solid black with no ghosting from the main area?",
-    "Does the TUI window properly fill the entire screen?",
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
     "Is the screen free of visual artifacts or corruption?",
     "Has the status bar returned to NORMAL mode (no 'INSERT')?",
     "Has the cursor reverted to a BLOCK shape?"
   ],
   "screenshots/20_nvim_move_h.png": [
-    "Is the background solid black with no ghosting from the main area?",
-    "Does the TUI window properly fill the entire screen?",
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
     "Is the screen free of visual artifacts or corruption?",
     "Is the block cursor positioned on a character other than the last one (moved left)?"
   ],
@@ -166,8 +178,9 @@
     "Is the screen free of visual corruption?"
   ],
   "screenshots/14_nvim_modal_open.png": [
-    "Is the background solid black with no ghosting from the main area?",
-    "Does the TUI window properly fill the entire screen?",
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
     "Is the screen free of visual artifacts or corruption?",
     "Are there line numbers or standard editor characters running down the left side?",
     "Is there a status bar at the very BOTTOM of the screen?",
@@ -180,8 +193,9 @@
     "Is the screen free of visual corruption?"
   ],
   "screenshots/17_nvim_typing.png": [
-    "Is the background solid black with no ghosting from the main area?",
-    "Does the TUI window properly fill the entire screen?",
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
     "Is the screen free of visual artifacts or corruption?",
     "Is the text 'Line 1: Visual Audit' visible?",
     "Is the cursor positioned after the typed text?",
@@ -192,6 +206,21 @@
     "Is the overall layout clean and professionally aligned?",
     "Is the main content area background dark?",
     "Is the screen free of visual corruption?"
+  ],
+  "screenshots/23_nvim_visual_mode.png": [
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
+    "Is the screen free of visual artifacts or corruption?",
+    "Is there a highlighted selection of text?",
+    "Does the status bar indicate VISUAL mode?"
+  ],
+  "screenshots/22_nvim_move_j.png": [
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
+    "Is the screen free of visual artifacts or corruption?",
+    "Is the block cursor moved DOWN to the next line?"
   ],
   "screenshots/25_nvim_closed.png": [
     "Is the screen free of any major visual corruption (text overlapping, tofu blocks)?",
@@ -249,14 +278,16 @@
     "Is the screen free of visual corruption?"
   ],
   "screenshots/19_nvim_move_k.png": [
-    "Is the background solid black with no ghosting from the main area?",
-    "Does the TUI window properly fill the entire screen?",
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
     "Is the screen free of visual artifacts or corruption?",
     "Is the block cursor now on the FIRST line of text?"
   ],
   "screenshots/16_nvim_insert_mode.png": [
-    "Is the background solid black with no ghosting from the main area?",
-    "Does the TUI window properly fill the entire screen?",
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
     "Is the screen free of visual artifacts or corruption?",
     "Does the status bar say 'INSERT'?",
     "Is the cursor shape a THIN VERTICAL BAR (or distinct from block)?",

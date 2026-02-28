@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import 'xterm/css/xterm.css';
 
 export default function TuiModal({ activeTerminal }) {
   const terminalRef = useRef(null);
+  const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
     if (!activeTerminal || !terminalRef.current) return;
@@ -18,9 +19,7 @@ export default function TuiModal({ activeTerminal }) {
         const el = terminalRef.current;
         if (!el || !terminal.element) return;
         try {
-            // Force container height to match window
-            el.style.height = '100vh';
-            el.style.width = '100vw';
+            // Let container size determine terminal size
             el.style.display = 'block';
 
             try {
@@ -34,7 +33,6 @@ export default function TuiModal({ activeTerminal }) {
             if (terminal.rows < 5 || terminal.cols < 5) {
                 terminal.resize(80, 24);
             }
-            
             
             terminal.scrollToBottom();
             terminal.refresh(0, terminal.rows - 1);
@@ -56,27 +54,36 @@ export default function TuiModal({ activeTerminal }) {
     return () => {
         clearInterval(interval);
     };
-  }, [activeTerminal]);
+  }, [activeTerminal, isMaximized]);
 
   return (
     <div className="tui-modal-overlay">
-      <div className="tui-terminal-container" ref={el => { 
-          if (el && activeTerminal?.terminal) { 
-              const term = activeTerminal.terminal;
-              if (term.element && term.element.parentElement !== el) {
-                  el.innerHTML = '';
-                  el.appendChild(term.element);
-                  term.focus();
-                  terminalRef.current = el;
-              } else if (!term.element) {
-                  term.open(el);
-                  term.focus();
-                  terminalRef.current = el;
-              } else {
-                  terminalRef.current = el;
-              }
-          } 
-      }} style={{ width: '100vw', height: '100vh', background: '#000' }} />
+      <div className={`tui-window ${isMaximized ? 'maximized' : ''}`}>
+        <div className="tui-window-header">
+          <div className="tui-traffic-lights">
+            <div className="tui-traffic-light red"></div>
+            <div className="tui-traffic-light yellow"></div>
+            <div className="tui-traffic-light green" onClick={() => setIsMaximized(!isMaximized)}></div>
+          </div>
+        </div>
+        <div className="tui-terminal-container" ref={el => { 
+            if (el && activeTerminal?.terminal) { 
+                const term = activeTerminal.terminal;
+                if (term.element && term.element.parentElement !== el) {
+                    el.innerHTML = '';
+                    el.appendChild(term.element);
+                    term.focus();
+                    terminalRef.current = el;
+                } else if (!term.element) {
+                    term.open(el);
+                    term.focus();
+                    terminalRef.current = el;
+                } else {
+                    terminalRef.current = el;
+                }
+            } 
+        }} />
+      </div>
     </div>
   );
 }

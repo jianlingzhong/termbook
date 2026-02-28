@@ -26,10 +26,11 @@ report_lock = threading.Lock()
 
 # Fallback chain for models
 MODEL_FALLBACKS = [
+    "models/gemini-3.0-pro-preview",
+    "models/gemini-3.0-flash",
     "models/gemini-2.0-flash",
-    "models/gemini-pro-latest",
     "models/gemini-1.5-flash",
-    "models/gemini-1.5-pro"
+    "models/gemini-pro-latest"
 ]
 
 def audit_image(dummy_model, filepath, checklist, attempts=2):

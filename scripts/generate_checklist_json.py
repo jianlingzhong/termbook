@@ -14,8 +14,9 @@ cell_questions = [
 ]
 
 tui_modal_questions = [
-    "Is the background solid black with no ghosting from the main area?",
-    "Does the TUI window properly fill the entire screen?",
+    "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
+    "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
+    "Is there a window header with red/yellow/green traffic light buttons?",
     "Is the screen free of visual artifacts or corruption?"
 ]
 
