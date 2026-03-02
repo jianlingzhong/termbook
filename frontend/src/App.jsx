@@ -24,11 +24,14 @@ function App() {
   const sessionSocketsRef = useRef({});
   const creatingSockets = useRef(new Set());
   const sessionTerminals = useRef({});
+  const sessionDimsRef = useRef({});
+  const sessionTuiStatesRef = useRef({});
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
 
   useEffect(() => { sessionRunningRef.current = sessionRunning; }, [sessionRunning]);
   useEffect(() => { sessionSocketsRef.current = sessionSockets; }, [sessionSockets]);
+  useEffect(() => { sessionTuiStatesRef.current = sessionTuiStates; }, [sessionTuiStates]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -52,7 +55,7 @@ function App() {
               const cells = s.cells.map(c => {
                   if (c.output && !c.snapshot) {
                       const cleanOutput = c.output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-                      return { ...c, snapshot: `<div style="color: #e0e5ff; font-family: 'JetBrains Mono', monospace; white-space: pre-wrap; font-size: 13px; line-height: 1.5;">${cleanOutput}</div>` };
+                      return { ...c, snapshot: `<div style="color: #e0e5ff; font-family: 'JetBrains Mono', monospace; white-space: pre; overflow-x: auto; font-size: 13px; line-height: 1.5;">${cleanOutput}</div>` };
                   }
                   return c;
               });
@@ -87,7 +90,7 @@ function App() {
             const cells = data.cells.map(c => {
                 if (c.output && !c.snapshot) {
                     const cleanOutput = c.output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-                    return { ...c, snapshot: `<div style="color: #e0e5ff; font-family: 'JetBrains Mono', monospace; white-space: pre-wrap; font-size: 13px; line-height: 1.5;">${cleanOutput}</div>` };
+                    return { ...c, snapshot: `<div style="color: #e0e5ff; font-family: 'JetBrains Mono', monospace; white-space: pre; overflow-x: auto; font-size: 13px; line-height: 1.5;">${cleanOutput}</div>` };
                 }
                 return c;
             });
@@ -113,7 +116,8 @@ function App() {
       theme: { background: '#000000', foreground: '#e0e5ff', cursor: '#00ecec', cursorAccent: '#1a1b26' },
       convertEol: true, cursorBlink: false, cursorStyle: 'block',
       fontFamily: '"JetBrains Mono", monospace', fontSize: 13, allowProposedApi: true,
-      rows: 24, cols: 80,
+      rows: sessionDimsRef.current[sessionId]?.rows || 24,
+      cols: sessionDimsRef.current[sessionId]?.cols || 80,
       rendererType: 'dom' // Ensure text is visible to Playwright
     });
     if (typeof document !== 'undefined') {
@@ -142,8 +146,15 @@ function App() {
     terminal.onResize(({ cols, rows }) => {
         if (cols === lastResize.cols && rows === lastResize.rows) return;
         lastResize = { cols, rows };
+        sessionDimsRef.current[sessionId] = { cols, rows };
         const ws = sessionSocketsRef.current[sessionId];
-        if (ws) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+        if (ws) {
+            const termData = sessionTerminals.current[key];
+            const ptyCols = (termData && termData.isInteractive) ? Math.max(2, cols - 1) : cols;
+            const ptyRows = (termData && termData.isInteractive) ? Math.max(2, rows - 1) : rows;
+            console.log(`[RESIZE_EVENT] sending resize to backend: cols=${ptyCols}(xterm=${cols}), rows=${ptyRows}(xterm=${rows})`);
+            ws.send(JSON.stringify({ type: 'resize', cols: ptyCols, rows: ptyRows }));
+        }
     });
 
     sessionTerminals.current[key] = { terminal, fitAddon, serializeAddon };
@@ -153,7 +164,8 @@ function App() {
   const handleCreateSnapshot = (sessionId, cellId) => {
     const termData = sessionTerminals.current[`${sessionId}-${cellId}`];
     if (!termData) return "";
-    let html = termData.serializeAddon.serializeAsHTML();
+    const options = termData.isInteractive ? { scrollback: 0 } : {};
+    let html = termData.serializeAddon.serializeAsHTML(options);
     const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
     if (bodyMatch && bodyMatch[1]) html = bodyMatch[1];
     return html.replace(/color:\s*#000000/g, 'color: #e0e5ff')
@@ -196,6 +208,21 @@ function App() {
             setTimeout(() => inputRef.current?.focus(), 100);
         } else if (msg.type === 'output') {
           const termData = getOrCreateTerminal(sessionId, msg.cellId);
+          // DEBUG: Log the raw hex of the output
+          const hex = Array.from(msg.data).map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ');
+          console.log(`[TUI_DEBUG] received output: ${msg.data.replace(/\x1b/g, 'ESC')} (hex: ${hex})`);
+
+          if (!termData.isInteractive && (msg.data.includes('\x1b[2J') || msg.data.includes('\x1b[?25l') || msg.data.includes('\x1b[H'))) {
+              console.log('[TUI_DEBUG] isInteractive set to true due to escape sequences. Calling clear()');
+              termData.isInteractive = true;
+              const maxRows = Math.floor((window.innerHeight - 200) / 20);
+              const safeMaxRows = Math.max(10, maxRows);
+              termData.terminal.resize(termData.terminal.cols, safeMaxRows);
+              // Reset the terminal to ensure it acts as a fixed viewport without scrollback for TUI
+              termData.terminal.options.scrollback = 0;
+              termData.terminal.clear();
+              termData.terminal.write('\x1b[H');
+          }
           termData.terminal.write(msg.data);
         } else if (msg.type === 'exit') {
           const { cellId, pwd } = msg;

@@ -74,7 +74,7 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
 .prompt-arrow { color: var(--accent-cyan) !important; font-weight: 900; font-family: "JetBrains Mono", monospace; font-size: 16px; margin-right: 4px; }
 .read-only-command { font-family: "JetBrains Mono", monospace; color: #ffffff; font-size: 15px; font-weight: 600; word-break: break-all; white-space: pre-wrap; line-height: 1.6; }
 .cell-output { padding: 8px 16px; min-height: 24px; max-height: 600px; overflow-y: auto; display: block; background: #000000 !important; position: relative; width: 100%; box-sizing: border-box; }
-.snapshot-output { font-family: "JetBrains Mono", monospace; font-size: 13px; line-height: 1.6; color: var(--text-primary); white-space: pre-wrap; display: block; width: 100%; word-break: break-word; }
+.snapshot-output { font-family: "JetBrains Mono", monospace; font-size: 13px; line-height: 1.6; color: var(--text-primary); white-space: pre; overflow-x: auto; display: block; width: 100%; }
 .live-terminal { width: 100% !important; height: auto !important; }
 .live-terminal .xterm { width: 100% !important; padding: 4px 0; }
 .live-terminal .xterm-rows { width: 100% !important; }

@@ -5,7 +5,9 @@ export default function NotebookCell({ id, snapshot, activeTerminal, initialComm
   const terminalRef = useRef(null);
   const containerRef = useRef(null);
   const [isTerminalAttached, setIsTerminalAttached] = useState(false);
-
+  const maxReachedRowsRef = useRef(1);
+  const lastCursorYRef = useRef(0);
+  const lastBaseYRef = useRef(0);
   const terminalRefCallback = useCallback(node => {
     if (node !== null) {
       terminalRef.current = node;
@@ -27,17 +29,58 @@ export default function NotebookCell({ id, snapshot, activeTerminal, initialComm
             terminal.focus();
         }
 
+        const cursorMoveDisposable = terminal.onCursorMove(() => {
+            const buffer = terminal.buffer.active;
+            if (buffer.cursorY < lastCursorYRef.current && buffer.baseY === lastBaseYRef.current) {
+                if (!activeTerminal.isInteractive) {
+                    activeTerminal.isInteractive = true;
+                    // Trigger an immediate resize to snap to full size
+                    setTimeout(handleResize, 10);
+                }
+            }
+            lastCursorYRef.current = buffer.cursorY;
+            lastBaseYRef.current = buffer.baseY;
+        });
+
         const handleResize = () => {
             if (!terminal.element || !containerRef.current) return;
             try {
-                fitAddon.fit();
+                const dims = fitAddon.proposeDimensions();
+                if (!dims) return;
+
                 const buffer = terminal.buffer.active;
                 // Use total rows that have content or cursor position to determine height
                 const contentRows = buffer.baseY + buffer.cursorY + 1;
-                // During TUI transitions, ensure we don't clip the 24-row standard if it's active
-                const targetRows = Math.max(1, Math.min(100, contentRows));
-                if (terminal.rows !== targetRows) {
-                    terminal.resize(terminal.cols, targetRows);
+                
+                // Prevent shrinking (High-Water Mark)
+                if (!activeTerminal.isInteractive && contentRows > maxReachedRowsRef.current) {
+                    maxReachedRowsRef.current = contentRows;
+                }
+                const highWaterRows = maxReachedRowsRef.current;
+
+                // Viewport-aware max rows (approx 20px per row, leaving some buffer for header/input)
+                const maxRows = Math.floor((window.innerHeight - 200) / 20);
+                const safeMaxRows = Math.max(10, maxRows);
+                
+                let targetRows;
+                if (activeTerminal.isInteractive) {
+                    targetRows = safeMaxRows;
+                } else {
+                    targetRows = Math.max(1, Math.min(safeMaxRows, highWaterRows));
+                }
+                
+                if (terminal.rows !== targetRows || terminal.cols !== dims.cols) {
+                    terminal.resize(dims.cols, targetRows);
+                }
+
+                // Smart Auto-Scroll the Container
+                const scrollContainer = terminalRef.current.closest('.notebook-content');
+                if (scrollContainer) {
+                    const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+                    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+                    if (isAtBottom) {
+                        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+                    }
                 }
             } catch(e){}
         };
@@ -54,6 +97,7 @@ export default function NotebookCell({ id, snapshot, activeTerminal, initialComm
             ro.disconnect();
             resizeDisposable.dispose();
             dataDisposable.dispose();
+            cursorMoveDisposable.dispose();
             clearInterval(poll);
         };
     }
