@@ -9,7 +9,7 @@ test.describe('Termbook E2E Verification', () => {
 
     test('Non-interactive commands (ls, pwd) should render and retian focus', async ({ page }) => {
         // 1. Run 'ls'
-        const input = page.getByPlaceholder('Enter terminal command...');
+        const input = page.locator('.chat-input-wrapper input');
         await input.waitFor({ state: 'visible', timeout: 10000 });
 
         await input.click();
@@ -52,7 +52,7 @@ test.describe('Termbook E2E Verification', () => {
     });
 
     test('Interactive TUI rendering and focus', async ({ page }) => {
-        const input = page.getByPlaceholder('Enter terminal command...');
+        const input = page.locator('.chat-input-wrapper input');
         await input.waitFor({ state: 'visible', timeout: 10000 });
 
         // Mimic TUI using python
@@ -71,8 +71,8 @@ test.describe('Termbook E2E Verification', () => {
         await expect(input).not.toBeFocused();
 
         // Verify TUI content
-        const tuiCell = page.locator('.cell-output.live-terminal').last();
-        await expect(tuiCell.locator('canvas')).toBeVisible();
+        const tuiModal = page.locator('.tui-modal-overlay');
+        await expect(tuiModal.locator('.xterm-screen').first()).toBeVisible();
 
         // Snapshot TUI
         await page.screenshot({ path: 'e2e_tui_mode.png' });
@@ -83,5 +83,34 @@ test.describe('Termbook E2E Verification', () => {
         // Verify focus returns to global input after exit
         await expect(input).toBeFocused();
     });
-});
 
+    test('TUI cell should not jump or shrink during execution', async ({ page }) => {
+        const input = page.locator('.chat-input-wrapper input');
+        await input.waitFor({ state: 'visible', timeout: 10000 });
+
+        // We use a python script to simulate an inline TUI (like omp) that uses primary screen buffer.
+        // It will clear the screen (cursor home) multiple times.
+        const inlineTuiCommand = "python3 -c \"import sys, time; sys.stdout.write('Line 1\\nLine 2\\nLine 3\\nLine 4\\nLine 5\\n'); sys.stdout.flush(); time.sleep(1); sys.stdout.write('\\x1b[H\\x1b[2JNew Frame Line 1\\nNew Frame Line 2\\n'); sys.stdout.flush(); time.sleep(1);\"";
+
+        await input.click();
+        await input.fill(inlineTuiCommand);
+        await input.press('Enter');
+
+        const cell = page.locator('.notebook-cell').last();
+        await cell.waitFor({ state: 'visible', timeout: 5000 });
+        
+        // Wait for first render
+        await page.waitForTimeout(500);
+        const initialBox = await cell.boundingBox();
+        expect(initialBox.height).toBeGreaterThan(50); // Should have grown to fit the lines
+        
+        // Wait for the clear screen and redraw
+        await page.waitForTimeout(1000);
+        const afterClearBox = await cell.boundingBox();
+        
+        // The height should NOT shrink when the screen is cleared
+        expect(afterClearBox.height).toBeGreaterThanOrEqual(initialBox.height);
+        // The Y position should remain stable
+        expect(Math.abs(afterClearBox.y - initialBox.y)).toBeLessThan(5);
+    });
+});

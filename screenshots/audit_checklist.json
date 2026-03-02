@@ -48,7 +48,8 @@
     "Is there a notebook cell visible in the main area?",
     "Does the cell header show the command '\u276f ls'?",
     "Does the cell output list items like 'backend/', 'frontend/', 'package.json', or 'tests/'?",
-    "Is the output text monospace font?"
+    "Is the output text monospace font?",
+    "Does the 'ls' output maintain strict tabular column alignment (no awkward wrapping)?"
   ],
   "screenshots/14_nvim_modal_open_pre_check.png": [
     "Is the screen free of any major visual corruption (text overlapping, tofu blocks)?",
@@ -62,6 +63,12 @@
     "Is the main content area background dark?",
     "Is the breadcrumb path clearly visible?",
     "Is there a folder icon next to the path?"
+  ],
+  "screenshots/nvim_01_new_session.png": [
+    "Is the screen free of any major visual corruption (text overlapping, tofu blocks)?",
+    "Is the overall layout clean and professionally aligned?",
+    "Is the main content area background dark?",
+    "Is the screen free of visual corruption?"
   ],
   "screenshots/step_1_ls_done.png": [
     "Is the screen free of any major visual corruption (text overlapping, tofu blocks)?",
@@ -108,6 +115,18 @@
     "Is the main content area background dark?",
     "Is the screen free of visual corruption?"
   ],
+  "screenshots/audit_01_start.png": [
+    "Is the screen free of any major visual corruption (text overlapping, tofu blocks)?",
+    "Is the overall layout clean and professionally aligned?",
+    "Is the main content area background dark?",
+    "Is the screen free of visual corruption?"
+  ],
+  "screenshots/09_typing_invalid.png": [
+    "Is the screen free of any major visual corruption (text overlapping, tofu blocks)?",
+    "Is the overall layout clean and professionally aligned?",
+    "Is the main content area background dark?",
+    "Is the screen free of visual corruption?"
+  ],
   "screenshots/05_typing_pwd.png": [
     "Is the screen free of any major visual corruption (text overlapping, tofu blocks)?",
     "Is the overall layout clean and professionally aligned?",
@@ -144,6 +163,12 @@
     "Has the status bar returned to NORMAL mode (no 'INSERT')?",
     "Has the cursor reverted to a BLOCK shape?"
   ],
+  "screenshots/10_invalid_output.png": [
+    "Is the screen free of any major visual corruption (text overlapping, tofu blocks)?",
+    "Is the overall layout clean and professionally aligned?",
+    "Is the main content area background dark?",
+    "Is the screen free of visual corruption?"
+  ],
   "screenshots/20_nvim_move_h.png": [
     "Is the background a dark, semi-transparent overlay (allowing the main area to be faintly visible)?",
     "Is the TUI window clearly visible and centered (or maximized) with a dark background?",
@@ -158,7 +183,7 @@
     "Is the command in the cell header fully visible and correctly formatted?",
     "Does the layout properly accommodate long commands (wrapping or expanding)?",
     "Is there a cell showing the 'echo' output (long line of dashes)?",
-    "Does the output text use the full width of the cell (no premature wrapping)?"
+    "Does the output text use a single line with horizontal scroll (no wrapping)?"
   ],
   "screenshots/06_pwd_output.png": [
     "Is the screen free of any major visual corruption (text overlapping, tofu blocks)?",
@@ -185,6 +210,12 @@
     "Are there line numbers or standard editor characters running down the left side?",
     "Is there a status bar at the very BOTTOM of the screen?",
     "Is the status bar NOT floating in the middle of the screen?"
+  ],
+  "screenshots/07_typing_echo.png": [
+    "Is the screen free of any major visual corruption (text overlapping, tofu blocks)?",
+    "Is the overall layout clean and professionally aligned?",
+    "Is the main content area background dark?",
+    "Is the screen free of visual corruption?"
   ],
   "screenshots/step_6_nvim_done.png": [
     "Is the screen free of any major visual corruption (text overlapping, tofu blocks)?",

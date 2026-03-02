@@ -38,7 +38,8 @@ checklist_map = {
         "Is there a notebook cell visible in the main area?",
         "Does the cell header show the command '❯ ls'?",
         "Does the cell output list items like 'backend/', 'frontend/', 'package.json', or 'tests/'?",
-        "Is the output text monospace font?"
+        "Is the output text monospace font?",
+        "Does the 'ls' output maintain strict tabular column alignment (no awkward wrapping)?"
     ],
     "05_typing_pwd.png": [
         "Does the input box contain the text 'pwd'?"
@@ -57,7 +58,7 @@ checklist_map = {
     ],
     "08_echo_output.png": base_ui_questions + cell_questions + [
         "Is there a cell showing the 'echo' output (long line of dashes)?",
-        "Does the output text use the full width of the cell (no premature wrapping)?"
+        "Does the output text use a single line with horizontal scroll (no wrapping)?"
     ],
     "14_nvim_modal_open.png": tui_modal_questions + [
         "Are there line numbers or standard editor characters running down the left side?",

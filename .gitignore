@@ -52,3 +52,24 @@ mprocs.log
 desc_*
 temp_desc*
 massive_audit.txt
+
+# Generated debugging files and media
+*.webm
+*.hex
+test_*.js
+test_*.py
+capture_*.py
+simulate_*.js
+run_test.js
+list_models.py
+*_frames/
+frontend/frames/
+frontend/frames_retry2/
+frontend/e2e_*.png
+frontend/audit_*.png
+frontend/infinite_*.png
+gemini_tui_frame_*.png
+*.pdf
+backend/test-pty.js
+frames_audit/
+test_output.log
