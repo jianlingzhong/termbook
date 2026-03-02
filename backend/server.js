@@ -28,7 +28,7 @@ function createSession(sessionId) {
   const pythonArgs = [path.join(__dirname, 'pty_wrapper.py'), '/bin/bash', '--rcfile', rcPath, '-i'];
   
   console.log(`[*] Starting PTY wrapper for session ${sessionId}...`);
-  const ptyProcess = cp.spawn('python3', pythonArgs, { cwd: projectRoot, env: { ...process.env, TERM: 'xterm-256color' }, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+  const ptyProcess = cp.spawn('python3', pythonArgs, { cwd: projectRoot, env: { ...process.env, TERM: 'xterm-kitty', COLORTERM: 'truecolor', FORCE_COLOR: '3' }, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
   
   ptyProcess.on('error', (err) => console.error(`[PTY ERROR] ${err}`));
   ptyProcess.on('exit', (code) => console.log(`[PTY EXIT] session ${sessionId} code ${code}`));
@@ -121,7 +121,10 @@ wss.on('connection', (ws, req) => {
         }
       } else if (msg.type === 'input') {
         const s = sessions.get(activeId);
-        if (s) s.ptyProcess.stdin.write(msg.data);
+        if (s) {
+            console.log(`[BACKEND INPUT] ${JSON.stringify(msg.data)}`);
+            s.ptyProcess.stdin.write(msg.data);
+        }
       } else if (msg.type === 'resize') {
         const s = sessions.get(activeId);
         if (s && s.resizePipe) s.resizePipe.write(JSON.stringify({ type: 'resize', rows: msg.rows, cols: msg.cols }) + '\n');
