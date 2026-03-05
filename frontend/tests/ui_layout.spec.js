@@ -11,7 +11,7 @@ test('UI Layout and Auto-Grow Terminal', async ({ page }) => {
   await expect(ghostCell).not.toBeVisible();
 
   // 1. Verify Global Input is available
-  const input = page.locator('input[placeholder="Enter terminal command..."]');
+  const input = page.locator('textarea[placeholder="Enter terminal command..."]');
   await expect(input).toBeVisible();
 
   // 2. Trigger a command to create a cell

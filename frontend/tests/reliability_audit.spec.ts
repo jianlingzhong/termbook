@@ -18,7 +18,7 @@ test.describe('Reliability Audit V4 - Sequence Test', () => {
     test('Execute ls-vim-nvim sequence with zero residuals', async ({ page }) => {
         test.setTimeout(300000);
 
-        const input = page.locator('.chat-input-wrapper input');
+        const input = page.locator('.chat-input-wrapper textarea');
         const modal = page.locator('.tui-modal-overlay');
 
         const commands = [

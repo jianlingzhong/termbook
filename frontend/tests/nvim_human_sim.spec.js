@@ -7,7 +7,7 @@ test.describe('Nvim Human Simulation Sequence', () => {
 
         // 1. Start a new session (Open App)
         await page.goto('http://localhost:4000');
-        const input = page.locator('input[placeholder="Enter terminal command..."]');
+        const input = page.locator('textarea[placeholder="Enter terminal command..."]');
         await expect(input).toBeVisible({ timeout: 30000 });
         
         // Ensure we are in a fresh session state

@@ -7,7 +7,7 @@ test.describe('Infinite Resize Loop Prevention', () => {
     });
 
     test('Inline TUI should lock its height and not infinitely loop', async ({ page }) => {
-        const input = page.locator('.chat-input-wrapper input');
+        const input = page.locator('.chat-input-wrapper textarea');
         await input.waitFor({ state: 'visible', timeout: 10000 });
 
         // A mock TUI that listens to SIGWINCH and redraws.

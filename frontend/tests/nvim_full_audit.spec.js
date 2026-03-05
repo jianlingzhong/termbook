@@ -14,7 +14,7 @@ test.describe('Nvim Sequential Visual Audit', () => {
         await page.waitForTimeout(3000);
         await page.screenshot({ path: 'screenshots/nvim_01_new_session.png' });
 
-        const input = page.locator('input[placeholder="Enter terminal command..."]');
+        const input = page.locator('textarea[placeholder="Enter terminal command..."]');
 
         // 2. run "ls"
         await input.fill('ls');

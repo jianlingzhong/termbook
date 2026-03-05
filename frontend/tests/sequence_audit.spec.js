@@ -13,7 +13,7 @@ test('nvim lifecycle and cursor audit sequence', async ({ page }) => {
     await page.waitForTimeout(3000);
     await page.screenshot({ path: 'screenshots/audit_01_session.png' });
 
-    const input = page.locator('input[placeholder="Enter terminal command..."]');
+    const input = page.locator('textarea[placeholder="Enter terminal command..."]');
     await expect(input).toBeVisible();
 
     // 2. run "ls"

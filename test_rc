@@ -1,0 +1,1 @@
+export PS1=""; export PROMPT_COMMAND="echo -ne \"\\033]133;D;\$?;SALT\\007\\033]7;file://localhost$PWD\\007\""; stty -echo;

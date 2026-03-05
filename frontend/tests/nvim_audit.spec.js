@@ -9,7 +9,7 @@ test.describe('Nvim Comprehensive Audit', () => {
         await page.waitForTimeout(2000);
         await page.screenshot({ path: 'screenshots/audit_01_new_session.png' });
 
-        const input = page.locator('input[placeholder="Enter terminal command..."]');
+        const input = page.locator('textarea[placeholder="Enter terminal command..."]');
         
         // 2. Initial ls
         await input.fill('ls');

@@ -26,7 +26,14 @@ def get_screenshot_description(filename):
         "audit_01_restored_ui.png": "Restored UI: Glassmorphism sidebar, Cyan accents, Correct font (JetBrains Mono).",
         "audit_03_nvim_normal.png": "Nvim Normal Fix: Cyan BLOCK cursor at (1,1). Terminal fills modal (no floating status bar).",
         "audit_04_nvim_insert.png": "Nvim Insert Fix: Cyan BAR cursor at end of text.",
-        "audit_06_autoscroll.png": "Auto-scroll: Last cell fully visible above input box."
+        "audit_06_hydration.png": "Hydration: All previous cells restored correctly. Scroll position maintained.",
+        "audit_07_stderr.png": "Stderr: Command 'ls' failed. Output should be distinct (ideally red/dimmed) to indicate error.",
+        "audit_08_long_line_wrap.png": "Line Wrap: Extremely long line of text. Verify it wraps at the terminal edge without horizontal scrolling or clipping.",
+        "audit_09_scrolling.png": "Scrolling: 100 lines of output. Verify a vertical scrollbar exists inside the cell and the layout remains stable.",
+        "audit_10_binary_data.png": "Binary/Chaos: Base64 random data. Verify no encoding artifacts or broken layout containers.",
+        "audit_11_resize_stability.png": "Resize: Captures state after viewport resize. Verify content is not truncated and cell height remains consistent (480px).",
+        "audit_12_text_selection.png": "Selection: Dragging over text. Verify a visible highlight/selection overlay exists on the characters.",
+        "audit_13_mobile_view.png": "Mobile: Viewport set to iPhone 12. Verify the input box is visible and accessible, and elements are correctly scaled for a small screen."
     }
     return descriptions.get(filename, "A screenshot of the Termbook terminal application. Verify UI consistency, layout, and cursor visibility.")
 
@@ -44,7 +51,7 @@ def audit_all(model_name):
         return
 
     screenshot_dir = os.path.join(os.getcwd(), "frontend", "screenshots")
-    files = sorted(glob.glob(os.path.join(screenshot_dir, "*.png")))
+    files = sorted(glob.glob(os.path.join(screenshot_dir, "audit_*.png")))
     
     if not files:
         print(f"No screenshots found in {screenshot_dir}")
@@ -95,6 +102,6 @@ def audit_all(model_name):
     print(f"Audit complete. Report saved to {report_path}")
 
 if __name__ == "__main__":
-    model = sys.argv[1] if len(sys.argv) > 1 else "gemini-2.0-pro-exp-02-05"
+    model = sys.argv[1] if len(sys.argv) > 1 else "gemini-1.5-pro"
     audit_all(model)
 

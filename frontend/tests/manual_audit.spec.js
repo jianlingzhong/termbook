@@ -9,7 +9,7 @@ test.describe('Nvim Manual Sequence Audit', () => {
         await page.goto('http://localhost:4000/?new_session=true');
         await page.waitForTimeout(5000); // Wait for boot
 
-        const input = page.locator('input[placeholder="Enter terminal command..."]');
+        const input = page.locator('textarea[placeholder="Enter terminal command..."]');
         await expect(input).toBeVisible({ timeout: 20000 });
         await page.screenshot({ path: 'screenshots/audit_01_session.png' });
 

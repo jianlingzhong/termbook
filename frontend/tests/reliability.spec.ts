@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test.describe('System Reliability & Stability', () => {
   test('should maintain reasonable cell height (no sprawl)', async ({ page }) => {
     await page.goto('http://localhost:4000/?new_session=true');
-    const input = page.locator('.chat-input-wrapper input');
+    const input = page.locator('.chat-input-wrapper textarea');
     
     // Fire many short commands
     for (let i = 0; i < 10; i++) {
@@ -26,7 +26,7 @@ test.describe('System Reliability & Stability', () => {
 
   test('should recover from rapid TUI entry/exit (no permanent black screen)', async ({ page }) => {
     await page.goto('http://localhost:4000/?new_session=true');
-    const input = page.locator('.chat-input-wrapper input');
+    const input = page.locator('.chat-input-wrapper textarea');
 
     // Rapidly enter and exit TUI multiple times
     for (let i = 0; i < 3; i++) {
@@ -47,7 +47,7 @@ test.describe('System Reliability & Stability', () => {
 
   test('should not flicker if output is identical', async ({ page }) => {
     await page.goto('http://localhost:4000/?new_session=true');
-    const input = page.locator('.chat-input-wrapper input');
+    const input = page.locator('.chat-input-wrapper textarea');
 
     await input.fill('python3 -c "import time; [print(\'steady\') for _ in range(5)]; time.sleep(2)"');
     await input.press('Enter');
@@ -65,7 +65,7 @@ test.describe('System Reliability & Stability', () => {
 
   test('should handle gemini-like TUI menu transitions', async ({ page }) => {
     await page.goto('http://localhost:4000/?new_session=true');
-    const input = page.locator('.chat-input-wrapper input');
+    const input = page.locator('.chat-input-wrapper textarea');
 
     await input.fill('python3 tests/mimic_gemini.py');
     await input.press('Enter');

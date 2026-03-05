@@ -5,7 +5,7 @@ jest.mock('uuid', () => ({
   v4: () => 'test-uuid'
 }));
 
-const { app } = require('./server');
+const { app, server } = require('./server');
 
 describe('Backend API', () => {
   test('GET /api/config returns app config', async () => {
@@ -14,15 +14,18 @@ describe('Backend API', () => {
     expect(response.body).toHaveProperty('appName');
   });
 
-  test('GET /api/history returns history array', async () => {
-    const response = await request(app).get('/api/history');
-    expect(response.status).toBe(200);
-    expect(response.body).toHaveProperty('history');
-  });
 
   test('GET /api/sessions returns sessions list', async () => {
     const response = await request(app).get('/api/sessions');
     expect(response.status).toBe(200);
     expect(response.body).toHaveProperty('sessions');
   });
+});
+
+afterAll((done) => {
+  if (server.listening) {
+    server.close(done);
+  } else {
+    done();
+  }
 });

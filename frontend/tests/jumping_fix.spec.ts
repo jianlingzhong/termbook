@@ -8,7 +8,7 @@ test('cell height should not shrink when content is cleared (High-Water Mark fix
   await page.waitForLoadState('networkidle');
 
   console.log('Looking for input...');
-  const input = page.locator('.chat-input-wrapper input');
+  const input = page.locator('.chat-input-wrapper textarea');
   await input.waitFor({ state: 'visible', timeout: 10000 });
 
   // Command that prints 10 lines, waits, then clears and prints 1 line

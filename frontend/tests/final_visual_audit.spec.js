@@ -11,7 +11,7 @@ test('nvim cursor and persistence flow', async ({ page }) => {
     await page.waitForTimeout(2000);
     await page.screenshot({ path: 'screenshots/step_01_new_session.png' });
 
-    const input = page.locator('input[placeholder="Enter terminal command..."]');
+    const input = page.locator('textarea[placeholder="Enter terminal command..."]');
     await expect(input).toBeVisible();
 
     // 2. run "ls"

@@ -20,7 +20,7 @@ test('restored ui fidelity and nvim cursor audit', async ({ page }) => {
     await page.screenshot({ path: 'screenshots/audit_01_restored_ui.png' });
 
     // 2. Check Layout/Whitespace with 'pwd' (short output)
-    const input = page.locator('input[placeholder="Enter terminal command..."]');
+    const input = page.locator('textarea[placeholder="Enter terminal command..."]');
     await input.fill('pwd');
     await input.press('Enter');
     await page.waitForTimeout(3000);

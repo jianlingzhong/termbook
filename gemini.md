@@ -19,7 +19,8 @@
   - **Restart**: `python3 manage_debug_servers.py restart` (Use `--clear-logs` to wipe logs)
   - **Status**: `python3 manage_debug_servers.py status`
   - **Rule**: DO NOT use `mprocs` or manual `npm run dev` unless explicitly debugging startup issues interactively. **ALWAYS** use this script to ensure ports are cleared and logs are properly rotated.
-- **PTY Environment Standardization**: For consistent Nvim/Vim rendering, ALWAYS set `COLUMNS=80` and `LINES=24` in the `spawn` environment and set a matching winsize immediately on fork in the PTY wrapper. Many TUIs will fail to render or "blank screen" if they detect a 0x0 terminal on boot.
+- **PTY Environment Standardization**: For consistent Nvim/Vim rendering, ALWAYS set `COLUMNS=80` and `LINES=24` in the `spawn` environment. Use `node-pty` for native performance. Many TUIs will fail to render or "blank screen" if they detect a 0x0 terminal on boot.
+
 - **Renaming Integrity**: After refactoring or renaming functions, perform a global `grep` search for the old string. LSPs may miss references in JSX props or event handlers.
 
 ## Debugging & Logging Protocols
@@ -42,7 +43,8 @@
 - **Chunk-Agnostic Streaming**: PTY output is often split mid-sequence. Use a `sentPos` pointer against a persistent `tailBuf` to ensure that partial escape sequences are held back until complete, preventing "visual leakage" of raw control codes into the UI.
 - **TUI Element Lifecycle**: When transitioning between Notebook view and TUI Modal, DO NOT call `terminal.open(el)` again. This resets internal state. Instead, append the existing `terminal.element` to the new container (`el.appendChild(terminal.element)`). This preserves the alternate screen buffer and scrollback.
 - **TUI-Aware Prompt Detection**: Disable or ignore shell prompt detection (OSC 133;D) while `isTuiActive` is true. TUIs may output data that accidentally triggers prompt regexes, leading to premature command termination and data leakage.
-- **FitAddon Reliability**: `fitAddon.fit()` is flaky if the container isn't fully reflowed. Implement a staged fit sequence (50ms, 250ms, 1000ms) on TUI mount. Avoid `ResizeObserver` for terminals as it frequently triggers infinite layout loops.
+- **Authoritative Dimensioning**: Avoid `ResizeObserver` and `fitAddon.fit()` for automatic terminal resizing as they frequently trigger infinite `SIGWINCH` loops. Instead, the frontend should calculate physical fit using `fitAddon.proposeDimensions()`, send a `resize` request to the backend, and wait for the backend to broadcast the new canonical grid size before applying it to the local canvas.
+
 
 ## Reliable TUI Testing (Playwright)
 

@@ -12,7 +12,7 @@ test('Gemini CLI integration test', async ({ page }) => {
   
   // The input is inside .chat-input-wrapper
   console.log('Waiting for input field...');
-  const input = page.locator('.chat-input-wrapper input');
+  const input = page.locator('.chat-input-wrapper textarea');
   await expect(input).toBeVisible({ timeout: 15000 });
   await input.click();
 

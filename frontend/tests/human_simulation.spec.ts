@@ -11,7 +11,7 @@ test.describe('Human Simulation: End-to-End Workflow', () => {
     // 1. ARRIVAL: User lands on the app and creates a new session
     const testSessionId = `human-sim-${browserName}-${Math.random().toString(36).substring(2, 7)}`;
     await page.goto(`http://localhost:4000/?session_id=${testSessionId}`);
-    const globalInput = page.locator('.chat-input-wrapper input');
+    const globalInput = page.locator('.chat-input-wrapper textarea');
 
     // 2. WARMUP: User runs a simple command
     await globalInput.fill('pwd');

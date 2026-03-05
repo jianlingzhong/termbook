@@ -8,7 +8,7 @@ test.describe('Visual Audit V2: Cell Sizing and Layout', () => {
   });
 
   test('cell sizing: pwd should be compact', async ({ page }) => {
-    const input = page.locator('input').first();
+    const input = page.locator('textarea').first();
     await input.fill('pwd');
     await input.press('Enter');
 
@@ -25,7 +25,7 @@ test.describe('Visual Audit V2: Cell Sizing and Layout', () => {
   });
 
   test('cell sizing: grows with output while live', async ({ page }) => {
-    const input = page.locator('input').first();
+    const input = page.locator('textarea').first();
     
     // Command that produces output slowly, longer duration
     await input.fill('for i in {1..10}; do echo "line $i"; sleep 1; done');
@@ -57,7 +57,7 @@ test.describe('Visual Audit V2: Cell Sizing and Layout', () => {
 
 
   test('cell width: output fills whole cell', async ({ page }) => {
-    const input = page.locator('input').first();
+    const input = page.locator('textarea').first();
     
     await input.fill('echo "----------------------------------------------------------------------------------------------------------------------------------------------------------------"');
     await input.press('Enter');
@@ -75,7 +75,7 @@ test.describe('Visual Audit V2: Cell Sizing and Layout', () => {
   });
 
   test('layout: new cells auto-scroll to bottom', async ({ page }) => {
-    const input = page.locator('input').first();
+    const input = page.locator('textarea').first();
     
     for (let i = 1; i <= 5; i++) {
         await input.fill(`echo "cell ${i}"`);

@@ -11,7 +11,7 @@ test('nvim user requested sequence audit', async ({ page }) => {
     await page.waitForTimeout(3000);
     await page.screenshot({ path: 'screenshots/user_01_start.png' });
 
-    const input = page.locator('input[placeholder="Enter terminal command..."]');
+    const input = page.locator('textarea[placeholder="Enter terminal command..."]');
     await expect(input).toBeVisible();
 
     // 2. run "ls"

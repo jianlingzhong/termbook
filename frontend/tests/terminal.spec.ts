@@ -35,7 +35,7 @@ test('can execute basic command', async ({ page }) => {
   await page.waitForTimeout(1500);
 
   // wait for global input to be ready
-  const input = page.locator('.chat-input-wrapper input[type="text"]');
+  const input = page.locator('.chat-input-wrapper textarea[type="text"]');
   await input.waitFor({ state: 'visible', timeout: 5000 });
 
   await input.fill(`echo "hello ${appNameLower}"`);
@@ -52,7 +52,7 @@ test('tui alternate screen opens overlay modal', async ({ page }) => {
   await page.waitForTimeout(1500);
 
   // wait for global input to be ready
-  const input = page.locator('.chat-input-wrapper input[type="text"]');
+  const input = page.locator('.chat-input-wrapper textarea[type="text"]');
   await input.waitFor({ state: 'visible', timeout: 5000 });
 
   // Simulate server sending TUI alternate buffer sequence
@@ -70,7 +70,7 @@ test('tui alternate screen exit renders snapshot', async ({ page }) => {
   await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
-  const input = page.locator('.chat-input-wrapper input[type="text"]');
+  const input = page.locator('.chat-input-wrapper textarea[type="text"]');
   await input.waitFor({ state: 'visible', timeout: 5000 });
 
   // 1. Trigger Modal Open
@@ -109,7 +109,7 @@ test('focus returns to global input after tui exit', async ({ page }) => {
   await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
-  const globalInput = page.locator('.chat-input-wrapper input[type="text"]');
+  const globalInput = page.locator('.chat-input-wrapper textarea[type="text"]');
 
   // Trigger TUI
   await page.evaluate(() => {
@@ -131,7 +131,7 @@ test('ghost text aligns with input field regardless of prompt length', async ({ 
   await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
-  const input = page.locator('.chat-input-wrapper input[type="text"]');
+  const input = page.locator('.chat-input-wrapper textarea[type="text"]');
   await input.fill('ls');
 
   // Verify ghost text appears (assuming 'ls' is in history from previous tests or default)
@@ -156,7 +156,7 @@ test('snapshots are preserved after session switch (re-render)', async ({ page }
   const initialSession = page.locator('.sidebar li.active');
   const initialSessionText = await initialSession.textContent();
 
-  const input = page.locator('.chat-input-wrapper input[type="text"]');
+  const input = page.locator('.chat-input-wrapper textarea[type="text"]');
   await input.fill('echo "persistent output"');
   await input.press('Enter');
 
@@ -185,7 +185,7 @@ test('long output snapshots are scrollable within the cell', async ({ page }) =>
   await page.waitForTimeout(1500);
 
   // Simulate a command with many lines of output
-  const input = page.locator('.chat-input-wrapper input[type="text"]');
+  const input = page.locator('.chat-input-wrapper textarea[type="text"]');
   await input.fill('seq 1 100'); // 100 lines of output
   await input.press('Enter');
 
@@ -210,7 +210,7 @@ test('cells maintain their size and do not shrink when many are added', async ({
   await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
-  const input = page.locator('.chat-input-wrapper input[type="text"]');
+  const input = page.locator('.chat-input-wrapper textarea[type="text"]');
 
   // Execute 15 commands to exceed standard viewport height
   for (let i = 1; i <= 15; i++) {
@@ -252,7 +252,7 @@ test('cell displays executable pwd breadcrumb', async ({ page }) => {
   await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
-  const input = page.locator('.chat-input-wrapper input[type="text"]');
+  const input = page.locator('.chat-input-wrapper textarea[type="text"]');
   await input.fill('echo "pwd test"');
   await input.press('Enter');
 
@@ -269,7 +269,7 @@ test('empty output commands collapse the cell output area', async ({ page }) => 
   await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
-  const input = page.locator('.chat-input-wrapper input[type="text"]');
+  const input = page.locator('.chat-input-wrapper textarea[type="text"]');
   // cd usually produces no output
   await input.fill('cd ..');
   await input.press('Enter');
@@ -319,7 +319,7 @@ test('pty output queuing prevents bleed between commands', async ({ page }) => {
   await page.goto('http://localhost:4000/?new_session=true');
   await page.waitForTimeout(1500);
 
-  const globalInput = page.locator('.chat-input-wrapper input[type="text"]');
+  const globalInput = page.locator('.chat-input-wrapper textarea[type="text"]');
 
   // Submit background command
   await globalInput.fill('sleep 2; echo "Background Done"');
@@ -349,7 +349,7 @@ test('tui modal injects pure cyan cursor theme for normal mode', async ({ page }
   await page.waitForTimeout(1500);
 
   // Execute a command to create at least one cell (which will have ID 1)
-  const input = page.locator('.chat-input-wrapper input[type="text"]');
+  const input = page.locator('.chat-input-wrapper textarea[type="text"]');
   await input.fill('echo "triggering tui"');
   await input.press('Enter');
   await expect(page.locator('.notebook-cell:not(.interactive-cell)')).toHaveCount(1, { timeout: 10000 });
@@ -390,7 +390,7 @@ test('manual terminal input keystrokes generate snapshot cells', async ({ page }
   await page.waitForTimeout(1500);
 
   // Trigger an initial cell to get a terminal instance attached to the DOM
-  const globalInput = page.locator('.chat-input-wrapper input[type="text"]');
+  const globalInput = page.locator('.chat-input-wrapper textarea[type="text"]');
   await globalInput.fill('echo "init"');
   await globalInput.press('Enter');
 

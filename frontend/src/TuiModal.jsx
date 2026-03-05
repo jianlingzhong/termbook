@@ -9,8 +9,6 @@ export default function TuiModal({ activeTerminal }) {
     if (!activeTerminal || !terminalRef.current) return;
     const { terminal, fitAddon } = activeTerminal;
 
-    
-    
     // Ensure correct theme
     terminal.options.theme = { ...terminal.options.theme, background: '#000000' };
     window.__ACTIVE_TERM = terminal;
@@ -19,40 +17,50 @@ export default function TuiModal({ activeTerminal }) {
         const el = terminalRef.current;
         if (!el || !terminal.element) return;
         try {
-            // Let container size determine terminal size
-            el.style.display = 'block';
+            // Ask fitAddon for physical dims but do not apply them.
+            // We must send them to the backend to get confirmed.
+            const dims = fitAddon.proposeDimensions();
+            if (dims && dims.cols > 0 && dims.rows > 0) {
+                window.dispatchEvent(new CustomEvent('tui-resize-request', { detail: { cols: dims.cols, rows: dims.rows }}));
+            }
 
-            try {
-                fitAddon.fit();
-            } catch (fitErr) {
-                console.warn("FitAddon.fit() failed, using default fallback:", fitErr);
-                terminal.resize(80, 24);
-            }
-            
-            // Ensure we have at least reasonable dimensions
-            if (terminal.rows < 5 || terminal.cols < 5) {
-                terminal.resize(80, 24);
-            }
-            
-            terminal.scrollToBottom();
-            terminal.refresh(0, terminal.rows - 1);
-            terminal.focus();
+            requestAnimationFrame(() => {
+                terminal.focus();
+                terminal.refresh(0, terminal.rows - 1);
+            });
         } catch (e) { 
             console.error("Critical TUI Fit error:", e); 
-            // Absolute fallback
-            try { terminal.resize(80, 24); } catch(inner) {}
         }
     };
     
-    // Multiple delayed fits for rendering lifecycle
-    setTimeout(performFit, 50);
-    setTimeout(performFit, 250);
-    setTimeout(performFit, 1000);
-    setTimeout(performFit, 3000);
-    const interval = setInterval(performFit, 5000);
+    // Use ResizeObserver on the container to detect when the modal actually has size
+    const ro = new ResizeObserver(() => {
+        performFit();
+    });
+    
+    if (terminalRef.current) {
+        ro.observe(terminalRef.current);
+    }
+    
+    // Initial fits
+    performFit();
+    setTimeout(performFit, 100);
+    setTimeout(performFit, 500);
+
+    const intervalId = setInterval(performFit, 5000);
+
+    let debounceTimer;
+    const resizeHandler = () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(performFit, 200);
+    };
+    window.addEventListener('resize', resizeHandler);
 
     return () => {
-        clearInterval(interval);
+        ro.disconnect();
+        clearInterval(intervalId);
+        window.removeEventListener('resize', resizeHandler);
+        clearTimeout(debounceTimer);
     };
   }, [activeTerminal, isMaximized]);
 

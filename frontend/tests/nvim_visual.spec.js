@@ -6,7 +6,7 @@ test.describe('Nvim Cursor Visual Audit', () => {
         await page.goto('http://localhost:4000');
         await page.waitForTimeout(2000);
 
-        const input = page.locator('input[placeholder="Enter terminal command..."]');
+        const input = page.locator('textarea[placeholder="Enter terminal command..."]');
         await expect(input).toBeVisible();
         
         await input.fill('python3 scripts/reproduce_cursor.py');

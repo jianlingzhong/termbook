@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Folder } from 'lucide-react';
+import { Terminal } from 'xterm';
+import { SerializeAddon } from '@xterm/addon-serialize';
 
-export default function NotebookCell({ id, snapshot, activeTerminal, initialCommand, executablePwd, isRunning, isTuiActive }) {
+export default function NotebookCell({ id, snapshotAnsi, activeTerminal, initialCommand, executablePwd, isRunning, isTuiActive, requestResize }) {
   const terminalRef = useRef(null);
-  const containerRef = useRef(null);
   const [isTerminalAttached, setIsTerminalAttached] = useState(false);
-  const maxReachedRowsRef = useRef(1);
-  const lastCursorYRef = useRef(0);
-  const lastBaseYRef = useRef(0);
+  const [renderedSnapshot, setRenderedSnapshot] = useState(null);
+
   const terminalRefCallback = useCallback(node => {
     if (node !== null) {
       terminalRef.current = node;
@@ -16,105 +16,56 @@ export default function NotebookCell({ id, snapshot, activeTerminal, initialComm
   }, []);
 
   useEffect(() => {
-    const isLive = !snapshot && !isTuiActive;
+    if (snapshotAnsi && !renderedSnapshot) {
+        const tempTerm = new Terminal({
+            theme: { background: '#000000', foreground: '#e0e5ff' },
+            rows: 24, cols: 120, allowProposedApi: true
+        });
+        const tempSerialize = new SerializeAddon();
+        tempTerm.loadAddon(tempSerialize);
+        tempTerm.write(snapshotAnsi, () => {
+            const html = tempSerialize.serializeAsHTML();
+            let cleaned = html;
+            const bodyMatch = cleaned.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+            if (bodyMatch && bodyMatch[1]) cleaned = bodyMatch[1];
+            cleaned = cleaned.replace(/color:\s*#000000/g, 'color: #e0e5ff')
+                       .replace(/background-color:\s*#ffffff/g, 'background-color: transparent')
+                       .replace(/background-color:\s*#ffff00/g, 'background-color: transparent');
+            setRenderedSnapshot(cleaned);
+            tempTerm.dispose();
+        });
+    }
+  }, [id, snapshotAnsi, renderedSnapshot]);
+
+  useEffect(() => {
+    const isLive = !renderedSnapshot && !isTuiActive;
     if (isLive && activeTerminal && isTerminalAttached && terminalRef.current) {
         const { terminal, fitAddon } = activeTerminal;
-        
         if (!terminal.element) {
             terminal.open(terminalRef.current);
-            terminal.focus();
+            // Do not focus terminal in normal mode (keeps focus on input)
         } else if (terminal.element.parentElement !== terminalRef.current) {
             terminalRef.current.innerHTML = '';
             terminalRef.current.appendChild(terminal.element);
-            terminal.focus();
         }
-
-        const cursorMoveDisposable = terminal.onCursorMove(() => {
-            const buffer = terminal.buffer.active;
-            if (buffer.cursorY < lastCursorYRef.current && buffer.baseY === lastBaseYRef.current) {
-                if (!activeTerminal.isInteractive) {
-                    activeTerminal.isInteractive = true;
-                    // Trigger an immediate resize to snap to full size
-                    setTimeout(handleResize, 10);
-                }
-            }
-            lastCursorYRef.current = buffer.cursorY;
-            lastBaseYRef.current = buffer.baseY;
-        });
 
         const handleResize = () => {
-            if (!terminal.element || !containerRef.current) return;
             try {
+                fitAddon.fit();
                 const dims = fitAddon.proposeDimensions();
-                if (!dims) return;
-
-                const buffer = terminal.buffer.active;
-                // Use total rows that have content or cursor position to determine height
-                const contentRows = buffer.baseY + buffer.cursorY + 1;
-                
-                // Prevent shrinking (High-Water Mark)
-                if (!activeTerminal.isInteractive && contentRows > maxReachedRowsRef.current) {
-                    maxReachedRowsRef.current = contentRows;
+                if (dims && requestResize) {
+                    // Larger safety buffer to prevent edge clipping (scrollbar etc)
+                    const safeCols = Math.max(10, dims.cols - 4); 
+                    requestResize(safeCols, dims.rows);
                 }
-                const highWaterRows = maxReachedRowsRef.current;
-
-                // Viewport-aware max rows (approx 20px per row, leaving some buffer for header/input)
-                const maxRows = Math.floor((window.innerHeight - 200) / 20);
-                const safeMaxRows = Math.max(10, maxRows);
-                
-                let targetRows;
-                if (activeTerminal.isInteractive) {
-                    targetRows = safeMaxRows;
-                } else {
-                    targetRows = Math.max(1, Math.min(safeMaxRows, highWaterRows));
-                }
-                
-                if (terminal.rows !== targetRows || terminal.cols !== dims.cols) {
-                    terminal.resize(dims.cols, targetRows);
-                }
-
-                // Smart Auto-Scroll the Container
-                const scrollContainer = terminalRef.current.closest('.notebook-content');
-                if (scrollContainer) {
-                    const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
-                    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-                    if (isAtBottom) {
-                        scrollContainer.scrollTop = scrollContainer.scrollHeight;
-                    }
-                }
-            } catch(e){}
+            } catch (e) {}
         };
-
-        const ro = new ResizeObserver(handleResize);
+        setTimeout(handleResize, 100);
+        const ro = new ResizeObserver(() => setTimeout(handleResize, 50));
         ro.observe(terminalRef.current);
-        const resizeDisposable = terminal.onResize(handleResize);
-        const dataDisposable = terminal.onData(() => setTimeout(handleResize, 10));
-        
-        setTimeout(handleResize, 50);
-        const poll = setInterval(handleResize, 1000);
-
-        return () => {
-            ro.disconnect();
-            resizeDisposable.dispose();
-            dataDisposable.dispose();
-            cursorMoveDisposable.dispose();
-            clearInterval(poll);
-        };
+        return () => ro.disconnect();
     }
-  }, [id, snapshot, activeTerminal, isTerminalAttached, isRunning, isTuiActive]);
-
-  const showSnapshot = !!snapshot;
-  const snapshotRef = useRef(null);
-
-  useEffect(() => {
-    if (showSnapshot && snapshotRef.current) {
-        const el = snapshotRef.current.parentElement;
-        if (el) {
-            el.scrollTop = el.scrollHeight;
-            el.style.height = 'auto';
-        }
-    }
-  }, [showSnapshot, snapshot]);
+  }, [id, renderedSnapshot, activeTerminal, isTerminalAttached, isTuiActive, requestResize]);
 
   return (
     <div className={`notebook-cell ${isRunning ? 'active-cell' : ''}`}>
@@ -130,15 +81,15 @@ export default function NotebookCell({ id, snapshot, activeTerminal, initialComm
             </div>
         )}
       </div>
-      <div className="cell-output" ref={containerRef}>
-        {showSnapshot && (
-          <div ref={snapshotRef} className="snapshot-output" dangerouslySetInnerHTML={{ __html: snapshot }} style={{ width: '100%' }} />
+      <div className="cell-output" style={{ height: '480px', minHeight: '480px', background: '#000' }}>
+        {renderedSnapshot && (
+          <div className="snapshot-output" dangerouslySetInnerHTML={{ __html: renderedSnapshot }} style={{ width: '100%', height: '100%', overflowY: 'auto' }} />
         )}
-        {!showSnapshot && isTuiActive && (
+        {!renderedSnapshot && isTuiActive && (
           <div className="tui-placeholder">Interactive TUI session active in modal...</div>
         )}
-        {!showSnapshot && !isTuiActive && (
-          <div className="live-terminal" ref={terminalRefCallback} style={{ width: '100%', minHeight: '24px' }} />
+        {!renderedSnapshot && !isTuiActive && (
+          <div className="live-terminal" ref={terminalRefCallback} style={{ width: '100%', height: '100%' }} />
         )}
       </div>
     </div>

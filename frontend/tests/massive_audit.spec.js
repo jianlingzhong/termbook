@@ -19,7 +19,7 @@ test('massive 30-step interactive visual audit', async ({ page }) => {
     await page.waitForTimeout(3000);
     await page.screenshot({ path: 'screenshots/02_session_created.png' });
 
-    const input = page.locator('.chat-input-wrapper input');
+    const input = page.locator('.chat-input-wrapper textarea');
     await expect(input).toBeEnabled({ timeout: 10000 });
 
     // 3. Typing 'ls'

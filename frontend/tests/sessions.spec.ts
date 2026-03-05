@@ -20,7 +20,7 @@ test.describe('Session Management & Persistent State', () => {
     await expect(page.locator('.sidebar h2', { hasText: /sessions/i })).toBeVisible({ timeout: 15000 });
     await expect(page.locator('.top-header .pwd-breadcrumb')).toBeVisible();
 
-    const getActiveInput = () => page.locator('.chat-input-wrapper input[type="text"]');
+    const getActiveInput = () => page.locator('.chat-input-wrapper textarea[type="text"]');
 
     // Command 1: Change directory
     const input1 = getActiveInput();
@@ -48,7 +48,7 @@ test.describe('Session Management & Persistent State', () => {
     await page.waitForTimeout(3000);
 
     // SETUP SESSION A
-    const inputA1 = page.locator('.chat-input-wrapper input[type="text"]');
+    const inputA1 = page.locator('.chat-input-wrapper textarea[type="text"]');
     await inputA1.waitFor({ state: 'visible', timeout: 15000 });
     const varName = `${config.markerPrefix.toUpperCase()}_VAR`;
     await inputA1.fill(`export ${varName}="session_a_secret"`);
@@ -69,7 +69,7 @@ test.describe('Session Management & Persistent State', () => {
     await expect(page.locator('.notebook-cell:not(.interactive-cell)')).toHaveCount(0, { timeout: 5000 });
 
     // VERIFY ISOLATION
-    const inputB1 = page.locator('.chat-input-wrapper input[type="text"]');
+    const inputB1 = page.locator('.chat-input-wrapper textarea[type="text"]');
     await inputB1.fill(`echo $${varName}`);
     await inputB1.press('Enter');
 
@@ -86,7 +86,7 @@ test.describe('Session Management & Persistent State', () => {
     await expect(page.locator('.notebook-cell:not(.interactive-cell)')).toHaveCount(1, { timeout: 5000 });
 
     // Execute a command to verify the PTY process is still alive and remembers our export!
-    const inputA2 = page.locator('.chat-input-wrapper input[type="text"]');
+    const inputA2 = page.locator('.chat-input-wrapper textarea[type="text"]');
     await inputA2.fill(`echo $${varName}`);
     await inputA2.press('Enter');
 

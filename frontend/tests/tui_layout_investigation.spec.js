@@ -13,7 +13,7 @@ test('TUI Layout Stability and Logging', async ({ page }, testInfo) => {
   // Wait for the active session to be initialized
   await page.waitForSelector('.sidebar li.active');
 
-  const input = page.locator('.chat-input-wrapper input');
+  const input = page.locator('.chat-input-wrapper textarea');
   await input.waitFor();
   
   // Create a mock gemini node script that correctly uses alternative screen buffer
