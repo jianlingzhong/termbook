@@ -17,265 +17,201 @@ function App() {
   const [sessionSockets, setSessionSockets] = useState({});
   const [sessionTuiStates, setSessionTuiStates] = useState({});
   const [sessionRunning, setSessionRunning] = useState({});
-  const [suggestion, setSuggestion] = useState('');
   const [inputValue, setInputValue] = useState('');
   
   const sessionRunningRef = useRef({});
   const sessionSocketsRef = useRef({});
-  const creatingSockets = useRef(new Set());
+  const sessionCellsRef = useRef({});
   const sessionTerminals = useRef({});
-  const sessionDimsRef = useRef({});
-  const sessionTuiStatesRef = useRef({});
   const inputRef = useRef(null);
   const scrollRef = useRef(null);
 
   useEffect(() => { sessionRunningRef.current = sessionRunning; }, [sessionRunning]);
   useEffect(() => { sessionSocketsRef.current = sessionSockets; }, [sessionSockets]);
-  useEffect(() => { sessionTuiStatesRef.current = sessionTuiStates; }, [sessionTuiStates]);
+  useEffect(() => { sessionCellsRef.current = sessionCells; }, [sessionCells]);
 
   useEffect(() => {
-    if (scrollRef.current) {
-        setTimeout(() => {
-            if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-        }, 200);
-    }
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [sessionCells, activeSessionId]);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const forceNew = urlParams.get('new_session') === 'true';
+    const existingId = urlParams.get('session_id');
+    const apiBase = window.location.origin.replace(':4000', ':4001');
 
-    fetch('/api/sessions').then(res => res.json()).then(data => {
+    fetch(`${apiBase}/api/sessions`).then(res => res.json()).then(data => {
       if (!forceNew && data.sessions && data.sessions.length > 0) {
         setSessions(data.sessions);
-        setActiveSessionId(data.sessions[0].id);
+        const targetId = existingId || data.sessions[0].id;
+        setActiveSessionId(targetId);
         data.sessions.forEach(s => {
           if (s.pwd) setSessionPwds(prev => ({ ...prev, [s.id]: s.pwd }));
-          if (s.cells) {
-              const cells = s.cells.map(c => {
-                  if (c.output && !c.snapshot) {
-                      const cleanOutput = c.output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-                      return { ...c, snapshot: `<div style="color: #e0e5ff; font-family: 'JetBrains Mono', monospace; white-space: pre; overflow-x: auto; font-size: 13px; line-height: 1.5;">${cleanOutput}</div>` };
-                  }
-                  return c;
-              });
-              setSessionCells(prev => ({ ...prev, [s.id]: cells }));
-          }
+          if (s.cells) setSessionCells(prev => ({ ...prev, [s.id]: s.cells }));
         });
-      } else { 
-        createNewSession(); 
-        if (forceNew) {
-            window.history.replaceState({}, '', window.location.pathname);
-        }
-      }
+      } else { createNewSession(); }
     }).catch(() => createNewSession());
-    fetch('/api/config').then(res => res.json()).then(data => setConfig(data));
-  }, []);
-
-  useEffect(() => {
-    const handleCloseDebug = () => {
-        setSessionTuiStates({});
-    };
-    window.addEventListener('close-tui-debug', handleCloseDebug);
-    return () => window.removeEventListener('close-tui-debug', handleCloseDebug);
+    fetch(`${apiBase}/api/config`).then(res => res.json()).then(data => setConfig(data));
   }, []);
 
   const switchSession = (sessionId) => {
     setActiveSessionId(sessionId);
-    setInputValue('');
-    setSuggestion('');
+    const newUrl = new URL(window.location);
+    newUrl.searchParams.set('session_id', sessionId);
+    window.history.pushState({}, '', newUrl);
     
-    fetch(`/api/sessions/${sessionId}`).then(res => res.json()).then(data => {
-        if (data.cells) {
-            const cells = data.cells.map(c => {
-                if (c.output && !c.snapshot) {
-                    const cleanOutput = c.output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-                    return { ...c, snapshot: `<div style="color: #e0e5ff; font-family: 'JetBrains Mono', monospace; white-space: pre; overflow-x: auto; font-size: 13px; line-height: 1.5;">${cleanOutput}</div>` };
-                }
-                return c;
-            });
-            setSessionCells(prev => ({ ...prev, [sessionId]: cells }));
-        }
+    const apiBase = window.location.origin.replace(':4000', ':4001');
+    fetch(`${apiBase}/api/sessions/${sessionId}`).then(res => res.json()).then(data => {
+        if (data.cells) setSessionCells(prev => ({ ...prev, [sessionId]: data.cells }));
         if (data.pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: data.pwd }));
         setTimeout(() => inputRef.current?.focus(), 100);
     }).catch(() => {});
   };
 
   const createNewSession = () => {
-    const id = "sess-" + Math.random().toString(36).substring(2, 9);
-    setSessions(prev => [...prev, { id, status: 'initializing' }]);
+    const id = "sess-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+    setSessions(prev => {
+        if (prev.some(s => s.id === id)) return prev;
+        return [...prev, { id, status: 'initializing' }];
+    });
     setSessionCells(prev => ({ ...prev, [id]: [] }));
     setActiveSessionId(id);
+    const newUrl = new URL(window.location);
+    newUrl.searchParams.set('session_id', id);
+    newUrl.searchParams.delete('new_session');
+    window.history.pushState({}, '', newUrl);
   };
 
   const getOrCreateTerminal = (sessionId, cellId = null) => {
-    const key = cellId ? `${sessionId}-${cellId}` : sessionId;
+    const key = `${sessionId}-${cellId}`;
     if (sessionTerminals.current[key]) return sessionTerminals.current[key];
-    
     const terminal = new Terminal({
-      theme: { background: '#000000', foreground: '#e0e5ff', cursor: '#00ecec', cursorAccent: '#1a1b26' },
+      theme: { background: '#000000', foreground: '#e0e5ff', cursor: '#00ecec' },
       convertEol: true, cursorBlink: false, cursorStyle: 'block',
       fontFamily: '"JetBrains Mono", monospace', fontSize: 13, allowProposedApi: true,
-      rows: sessionDimsRef.current[sessionId]?.rows || 24,
-      cols: sessionDimsRef.current[sessionId]?.cols || 80,
-      rendererType: 'dom' // Ensure text is visible to Playwright
+      rows: 24, cols: 120, rendererType: 'dom'
     });
     if (typeof document !== 'undefined') {
-        const hiddenDiv = document.createElement('div');
-        hiddenDiv.style.position = 'absolute';
-        hiddenDiv.style.left = '-9999px';
-        hiddenDiv.style.visibility = 'hidden';
-        // document.body.appendChild(hiddenDiv); // Don't even need to append
-        terminal.open(hiddenDiv);
+        const div = document.createElement('div');
+        div.style.position = 'absolute'; div.style.left = '-9999px';
+        terminal.open(div);
     }
-
-
     const fitAddon = new FitAddon();
     const serializeAddon = new SerializeAddon();
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(serializeAddon);
-    
     terminal.onData(data => { 
         if (sessionRunningRef.current[sessionId]) {
             const ws = sessionSocketsRef.current[sessionId];
-            if (ws) ws.send(JSON.stringify({ type: 'input', data })); 
+            if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'input', data })); 
         }
     });
-
-    let lastResize = { cols: 0, rows: 0 };
-    terminal.onResize(({ cols, rows }) => {
-        if (cols === lastResize.cols && rows === lastResize.rows) return;
-        lastResize = { cols, rows };
-        sessionDimsRef.current[sessionId] = { cols, rows };
-        const ws = sessionSocketsRef.current[sessionId];
-        if (ws) {
-            const termData = sessionTerminals.current[key];
-            const ptyCols = (termData && termData.isInteractive) ? Math.max(2, cols - 1) : cols;
-            const ptyRows = (termData && termData.isInteractive) ? Math.max(2, rows - 1) : rows;
-            console.log(`[RESIZE_EVENT] sending resize to backend: cols=${ptyCols}(xterm=${cols}), rows=${ptyRows}(xterm=${rows})`);
-            ws.send(JSON.stringify({ type: 'resize', cols: ptyCols, rows: ptyRows }));
-        }
-    });
-
     sessionTerminals.current[key] = { terminal, fitAddon, serializeAddon };
     return sessionTerminals.current[key];
-  };
-
-  const handleCreateSnapshot = (sessionId, cellId) => {
-    const termData = sessionTerminals.current[`${sessionId}-${cellId}`];
-    if (!termData) return "";
-    const options = termData.isInteractive ? { scrollback: 0 } : {};
-    let html = termData.serializeAddon.serializeAsHTML(options);
-    const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-    if (bodyMatch && bodyMatch[1]) html = bodyMatch[1];
-    return html.replace(/color:\s*#000000/g, 'color: #e0e5ff')
-               .replace(/background-color:\s*#ffffff/g, 'background-color: transparent')
-               .replace(/background-color:\s*#ffff00/g, 'background-color: transparent')
-               .replace(/font-family:[^;]*/g, "font-family: 'JetBrains Mono', monospace")
-               .replace(/font-size:[^;]*/g, "font-size: 13px")
-               .replace(/line-height:[^;]*/g, "line-height: 1.5")
-               .replace(/(<div[^>]*>&nbsp;<\/div>\s*)+<\/body>/i, '</body>') // Trim trailing empty rows
-               .replace(/(<div[^>]*><span[^>]*>\s*<\/span><\/div>\s*)+<\/body>/i, '</body>'); // Trim alternative empty rows
   };
 
   useEffect(() => {
     if (!activeSessionId) return;
     const sessionId = activeSessionId;
-    if (!sessionSockets[sessionId] && !creatingSockets.current.has(sessionId)) {
-      creatingSockets.current.add(sessionId);
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
-      const ws = new WebSocket(wsUrl);
-      
-      ws.onopen = () => {
-          ws.send(JSON.stringify({ type: 'join_session', sessionId }));
-      };
-      ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'session_init') {
-          if (msg.pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: msg.pwd }));
-          if (msg.isTuiActive) {
-              setSessionTuiStates(prev => ({ ...prev, [sessionId]: { cellId: msg.activeCellId } }));
-          }
-        } else if (msg.type === 'tui_enter') {
-            setSessionTuiStates(prev => ({ ...prev, [sessionId]: { cellId: msg.cellId } }));
-        } else if (msg.type === 'tui_exit') {
-            setSessionTuiStates(prev => { 
-                const n = {...prev}; 
-                delete n[sessionId]; 
-                return n; 
-            });
-            setTimeout(() => inputRef.current?.focus(), 100);
-        } else if (msg.type === 'output') {
-          const termData = getOrCreateTerminal(sessionId, msg.cellId);
-          // DEBUG: Log the raw hex of the output
-          const hex = Array.from(msg.data).map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ');
-          console.log(`[TUI_DEBUG] received output: ${msg.data.replace(/\x1b/g, 'ESC')} (hex: ${hex})`);
+    let ws = null;
+    let reconnectTimeout = null;
+    let retryCount = 0;
 
-          if (!termData.isInteractive && (msg.data.includes('\x1b[2J') || msg.data.includes('\x1b[?25l') || msg.data.includes('\x1b[H'))) {
-              console.log('[TUI_DEBUG] isInteractive set to true due to escape sequences. Calling clear()');
-              termData.isInteractive = true;
-              const maxRows = Math.floor((window.innerHeight - 200) / 20);
-              const safeMaxRows = Math.max(10, maxRows);
-              termData.terminal.resize(termData.terminal.cols, safeMaxRows);
-              // Reset the terminal to ensure it acts as a fixed viewport without scrollback for TUI
-              termData.terminal.options.scrollback = 0;
-              termData.terminal.clear();
-              termData.terminal.write('\x1b[H');
-          }
-          termData.terminal.write(msg.data);
-        } else if (msg.type === 'exit') {
-          const { cellId, pwd } = msg;
-          const termData = getOrCreateTerminal(sessionId, cellId);
-          setTimeout(() => {
-            termData.terminal.write('', () => {
-              const snapshot = handleCreateSnapshot(sessionId, cellId);
-              setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshot } : c) }));
-              setSessionRunning(prev => ({ ...prev, [sessionId]: false }));
-              if (pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: pwd }));
-              setTimeout(() => inputRef.current?.focus(), 100);
-            });
-          }, 400);
-        }
-      };
-      setSessionSockets(prev => ({ ...prev, [sessionId]: ws }));
-    }
-  }, [activeSessionId, sessionSockets]);
+    const connectWebSocket = () => {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host;
+        ws = new WebSocket(`${protocol}//${host}/ws`);
+        
+        ws.onopen = () => {
+            console.log(`[WS] Connected to session ${sessionId}`);
+            setSessionSockets(prev => ({ ...prev, [sessionId]: ws }));
+            ws.send(JSON.stringify({ type: 'join_session', sessionId, cols: 120, rows: 24 }));
+            retryCount = 0;
+        };
+
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'clear_history') {
+                setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).filter(c => c.isRunning) }));
+            } else if (msg.type === 'session_init') {
+                if (msg.pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: msg.pwd }));
+                if (msg.cells) {
+                    setSessionCells(prev => ({ ...prev, [sessionId]: msg.cells }));
+                    setSessionRunning(prev => ({ ...prev, [sessionId]: msg.cells.some(c => c.isRunning) }));
+                }
+                if (msg.isTuiActive) setSessionTuiStates(prev => ({ ...prev, [sessionId]: { cellId: msg.activeCellId } }));
+            } else if (msg.type === 'new_cell') {
+                const newCellId = msg.cellId || `cell-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+                setSessionCells(prev => {
+                    const currentCells = prev[sessionId] || [];
+                    if (currentCells.some(c => c.id === newCellId)) return prev;
+                    return { ...prev, [sessionId]: [...currentCells, { id: newCellId, command: msg.command, output: "", isRunning: true }] };
+                });
+                setSessionRunning(prev => ({ ...prev, [sessionId]: true }));
+            } else if (msg.type === 'tui_enter') {
+                setSessionTuiStates(prev => ({ ...prev, [sessionId]: { cellId: msg.activeCellId } }));
+            } else if (msg.type === 'tui_exit') {
+                setSessionTuiStates(prev => { const n = {...prev}; delete n[sessionId]; return n; });
+            } else if (msg.type === 'output') {
+                const cells = (sessionCellsRef.current[sessionId] || []);
+                const cell = cells.find(c => c.id === msg.cellId);
+                if (!cell || !cell.isRunning) return;
+                const termData = getOrCreateTerminal(sessionId, msg.cellId);
+                if (msg.data.includes('\x1b[2J') || msg.data.includes('\x1b[3J')) {
+                    termData.terminal.clear(); termData.terminal.reset();
+                }
+                termData.terminal.write(msg.data);
+            } else if (msg.type === 'exit') {
+                const { cellId, pwd, snapshotAnsi } = msg;
+                setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshotAnsi } : c) }));
+                setSessionRunning(prev => ({ ...prev, [sessionId]: false }));
+                if (pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: pwd }));
+                const termData = sessionTerminals.current[`${sessionId}-${cellId}`];
+                if (termData) { termData.terminal.dispose(); delete sessionTerminals.current[`${sessionId}-${cellId}`]; }
+            }
+        };
+
+        ws.onclose = () => {
+            console.warn(`[WS] Connection closed for ${sessionId}. Retrying...`);
+            setSessionSockets(prev => { const n = {...prev}; delete n[sessionId]; return n; });
+            const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+            reconnectTimeout = setTimeout(() => {
+                retryCount++;
+                connectWebSocket();
+            }, delay);
+        };
+    };
+
+    connectWebSocket();
+    return () => { 
+        if (ws) { ws.onclose = null; ws.close(); }
+        if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    };
+  }, [activeSessionId]);
 
   const handleCommand = (e) => {
-    if (e.key === 'Tab' && suggestion) {
-        e.preventDefault();
-        setInputValue(inputValue + suggestion);
-        setSuggestion('');
-        return;
-    }
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
       const cmd = inputValue.trim();
       if (!cmd || !activeSessionId) return;
-      const cellId = Date.now();
-      getOrCreateTerminal(activeSessionId, cellId);
-      setSessionCells(prev => ({ ...prev, [activeSessionId]: [...(prev[activeSessionId] || []), { id: cellId, command: cmd, executablePwd: sessionPwds[activeSessionId] }] }));
+      
+      const cellId = `cell-${Date.now()}`;
+      setSessionCells(prev => {
+          const currentCells = prev[activeSessionId] || [];
+          if (currentCells.some(c => c.id === cellId)) return prev;
+          return { ...prev, [activeSessionId]: [...currentCells, { id: cellId, command: cmd, executablePwd: sessionPwds[activeSessionId], output: "", isRunning: true }] };
+      });
       setSessionRunning(prev => ({ ...prev, [activeSessionId]: true }));
+      
       const ws = sessionSockets[activeSessionId];
-      if (ws) ws.send(JSON.stringify({ type: 'start', data: cmd, cellId }));
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'start', data: cmd, cellId }));
       setInputValue('');
-      setSuggestion('');
+      setTimeout(() => inputRef.current?.focus(), 10);
     }
   };
 
-  useEffect(() => {
-    if (!inputValue || !activeSessionId) {
-        setSuggestion('');
-        return;
-    }
-    const currentHistory = (sessionCells[activeSessionId] || []).map(c => c.command).reverse();
-    const otherHistory = Object.values(sessionCells).flat().map(c => c.command).reverse();
-    const history = [...new Set([...currentHistory, ...otherHistory])];
-    const match = history.find(cmd => cmd.startsWith(inputValue) && cmd.length > inputValue.length);
-    setSuggestion(match ? match.substring(inputValue.length) : '');
-  }, [inputValue, activeSessionId, sessionCells]);
-
   const activeTuiState = sessionTuiStates[activeSessionId];
+
   return (
     <div className="app-container">
       <div className="sidebar">
@@ -284,31 +220,53 @@ function App() {
             <h2>SESSIONS</h2>
             <button onClick={createNewSession} style={{background:'none', border:'none', color:'var(--accent-cyan)', cursor:'pointer'}} title="New Session"><Plus size={16}/></button>
         </div>
-        <ul>{sessions.map(s => <li key={s.id} data-session-id={s.id} className={activeSessionId === s.id ? 'active' : ''} onClick={() => switchSession(s.id)}><Hash size={14}/><span># {s.id.substring(0,8)}</span></li>)}</ul>
+        <ul>{sessions.map(s => <li key={s.id} className={activeSessionId === s.id ? 'active' : ''} onClick={() => switchSession(s.id)}><Hash size={14}/><span>{String(s.id).substring(0,14)}</span></li>)}</ul>
       </div>
       <div className="main-area">
         <div className="top-header">
            <div className="pwd-breadcrumb"><Folder size={14} color="var(--accent-cyan)" />{sessionPwds[activeSessionId] || '~'}</div>
-           {activeTuiState && <div className="tui-active-badge">TUI ACTIVE</div>}
+           <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
+             {(sessionCells[activeSessionId] || []).length > 500 && (
+               <div className="memory-warning-badge" title="High memory usage may slow down the UI">MEMORY HIGH</div>
+             )}
+             <button 
+                onClick={() => {
+                    const ws = sessionSockets[activeSessionId];
+                    if (ws) ws.send(JSON.stringify({ type: 'input', data: 'clear\r' }));
+                }}
+                className="clear-history-btn"
+             >Clear History</button>
+             {activeTuiState && <div className="tui-active-badge">TUI ACTIVE</div>}
+           </div>
         </div>
         <div className="notebook-content" ref={scrollRef}>
           {(sessionCells[activeSessionId] || []).map(c => (
-            <NotebookCell key={c.id} id={c.id} snapshot={c.snapshot} initialCommand={c.command} executablePwd={c.executablePwd} activeTerminal={getOrCreateTerminal(activeSessionId, c.id)} isRunning={sessionRunning[activeSessionId] && !c.snapshot} isTuiActive={activeTuiState?.cellId === c.id} />
+            <NotebookCell 
+                key={c.id} 
+                id={c.id} 
+                snapshotAnsi={c.snapshotAnsi} 
+                initialCommand={c.command} 
+                executablePwd={c.executablePwd} 
+                activeTerminal={getOrCreateTerminal(activeSessionId, c.id)} 
+                isRunning={sessionRunning[activeSessionId] && !c.snapshotAnsi} 
+                isTuiActive={activeTuiState?.cellId === c.id}
+                requestResize={(cols, rows) => {
+                    const ws = sessionSockets[activeSessionId];
+                    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+                }}
+            />
           ))}
-          <div style={{ height: '100px' }} />
+          <div style={{ height: '100px', flexShrink: 0 }} />
         </div>
         <div className="chat-input-container">
           <div className="chat-input-wrapper">
-            <span className="pwd-prompt-prefix">termbook <span className="prompt-arrow">❯</span></span>
-            {suggestion && <span className="ghost-suggestion-text">{inputValue}{suggestion}</span>}
-            <input 
-                ref={inputRef} 
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleCommand} 
-                placeholder={inputValue ? "" : "Enter terminal command..."} 
-                disabled={!!activeTuiState} 
-                autoFocus 
+            <span className="pwd-prompt-prefix">termbook ❯</span>
+            <textarea
+                ref={inputRef} value={inputValue}
+                onChange={(e) => { setInputValue(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px'; }}
+                onKeyDown={handleCommand} placeholder="Enter terminal command..."
+                disabled={sessionRunning[activeSessionId] || !!activeTuiState} rows={1}
+                style={{ resize: 'none', overflowY: 'auto', minHeight: '24px' }}
             />
           </div>
         </div>
@@ -317,5 +275,4 @@ function App() {
     </div>
   );
 }
-
 export default App;
