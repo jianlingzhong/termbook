@@ -1,12 +1,73 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Folder } from 'lucide-react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { Folder, Copy, RotateCcw, Check, AlertTriangle } from 'lucide-react';
 import { Terminal } from 'xterm';
 import { SerializeAddon } from '@xterm/addon-serialize';
 
-export default function NotebookCell({ id, snapshotAnsi, activeTerminal, initialCommand, executablePwd, isRunning, isTuiActive, requestResize }) {
+function formatDuration(ms) {
+    if (ms == null || ms < 0) return '';
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
+    const m = Math.floor(ms / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    return `${m}m ${s}s`;
+}
+
+function formatTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function stripAnsi(s) {
+    if (!s) return '';
+    return s.replace(/\x1b\][^\x07]*\x07/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b\([B0]/g, '').replace(/\r\n?/g, '\n');
+}
+
+function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function ansiToPlainHtml(ansi) {
+    const stripped = stripAnsi(ansi).replace(/\n+$/, '');
+    if (!stripped.trim()) return '';
+    return `<pre style="margin:0;font-family:monospace;color:#e0e5ff;white-space:pre-wrap;line-height:1.6;font-size:13px">${escapeHtml(stripped)}</pre>`;
+}
+
+function trimSnapshotRows(html) {
+    const rowRegex = /<div><span([^>]*)>([\s\S]*?)<\/span><\/div>/g;
+    const rows = [];
+    let match;
+    while ((match = rowRegex.exec(html)) !== null) {
+        const content = match[2];
+        const stripped = content.replace(/<[^>]+>/g, '');
+        const trimmed = stripped.replace(/[\s\u00a0]/g, '');
+        rows.push({
+            start: match.index,
+            end: match.index + match[0].length,
+            empty: trimmed.length === 0,
+        });
+    }
+    if (rows.length === 0) return html;
+    let first = 0;
+    while (first < rows.length && rows[first].empty) first++;
+    let last = rows.length - 1;
+    while (last >= 0 && rows[last].empty) last--;
+    if (first > last) return '';
+    const prefix = html.substring(0, rows[first].start);
+    const middle = html.substring(rows[first].start, rows[last].end);
+    const suffix = html.substring(rows[rows.length - 1].end);
+    let result = prefix + middle + suffix;
+    result = result.replace(/<div><span([^>]*)>([ \u00a0]+)([^<])/, '<div><span$1>$3');
+    return result;
+}
+
+export default function NotebookCell({ id, snapshotAnsi, activeTerminal, initialCommand, executablePwd, isRunning, isTuiActive, requestResize, exitCode, startedAt, finishedAt, usedTui, onRerun }) {
   const terminalRef = useRef(null);
   const [isTerminalAttached, setIsTerminalAttached] = useState(false);
   const [renderedSnapshot, setRenderedSnapshot] = useState(null);
+  const [liveContentRows, setLiveContentRows] = useState(0);
+  const plainPlaceholder = useMemo(() => snapshotAnsi ? ansiToPlainHtml(snapshotAnsi) : null, [snapshotAnsi]);
+  const displaySnapshot = renderedSnapshot || plainPlaceholder;
 
   const terminalRefCallback = useCallback(node => {
     if (node !== null) {
@@ -19,7 +80,8 @@ export default function NotebookCell({ id, snapshotAnsi, activeTerminal, initial
     if (snapshotAnsi && !renderedSnapshot) {
         const tempTerm = new Terminal({
             theme: { background: '#000000', foreground: '#e0e5ff' },
-            rows: 24, cols: 120, allowProposedApi: true
+            rows: 24, cols: 120, allowProposedApi: true,
+            scrollback: 5000
         });
         const tempSerialize = new SerializeAddon();
         tempTerm.loadAddon(tempSerialize);
@@ -31,6 +93,7 @@ export default function NotebookCell({ id, snapshotAnsi, activeTerminal, initial
             cleaned = cleaned.replace(/color:\s*#000000/g, 'color: #e0e5ff')
                        .replace(/background-color:\s*#ffffff/g, 'background-color: transparent')
                        .replace(/background-color:\s*#ffff00/g, 'background-color: transparent');
+            cleaned = trimSnapshotRows(cleaned);
             setRenderedSnapshot(cleaned);
             tempTerm.dispose();
         });
@@ -49,47 +112,170 @@ export default function NotebookCell({ id, snapshotAnsi, activeTerminal, initial
             terminalRef.current.appendChild(terminal.element);
         }
 
-        const handleResize = () => {
+        // Debounced + deduped resize: only emit when dimensions actually change,
+        // and at most once per 200ms. Prevents the SIGWINCH storm from
+        // ResizeObserver micro-fires during layout shuffles.
+        let debounceTimer = null;
+        let lastCols = -1;
+        let lastRows = -1;
+        const emitResize = () => {
+            debounceTimer = null;
             try {
                 fitAddon.fit();
                 const dims = fitAddon.proposeDimensions();
-                if (dims && requestResize) {
-                    // Larger safety buffer to prevent edge clipping (scrollbar etc)
-                    const safeCols = Math.max(10, dims.cols - 4); 
-                    requestResize(safeCols, dims.rows);
-                }
+                if (!dims || !requestResize) return;
+                const safeCols = Math.max(10, dims.cols - 4);
+                const safeRows = dims.rows;
+                if (safeCols === lastCols && safeRows === lastRows) return;
+                lastCols = safeCols;
+                lastRows = safeRows;
+                requestResize(safeCols, safeRows);
             } catch (e) {}
         };
-        setTimeout(handleResize, 100);
-        const ro = new ResizeObserver(() => setTimeout(handleResize, 50));
+        const scheduleResize = () => {
+            if (debounceTimer) return;
+            debounceTimer = setTimeout(emitResize, 200);
+        };
+
+        const initialTimer = setTimeout(emitResize, 100);
+        const ro = new ResizeObserver(scheduleResize);
         ro.observe(terminalRef.current);
-        return () => ro.disconnect();
+
+        const updateContentRows = () => {
+            try {
+                const buf = terminal.buffer.active;
+                let lastRow = 0;
+                for (let i = 0; i < buf.length; i++) {
+                    const line = buf.getLine(i);
+                    if (line && line.translateToString(true).trim().length > 0) lastRow = i + 1;
+                }
+                const cursorAbs = (buf.baseY || 0) + (buf.cursorY || 0) + 1;
+                setLiveContentRows(Math.max(lastRow, cursorAbs));
+            } catch (e) {}
+        };
+        updateContentRows();
+        const contentTick = setInterval(updateContentRows, 80);
+
+        return () => {
+            ro.disconnect();
+            clearTimeout(initialTimer);
+            if (debounceTimer) clearTimeout(debounceTimer);
+            clearInterval(contentTick);
+        };
     }
   }, [id, renderedSnapshot, activeTerminal, isTerminalAttached, isTuiActive, requestResize]);
 
+  const [copied, setCopied] = useState(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const outputRef = useRef(null);
+  const copy = async (what, value) => {
+    try { await navigator.clipboard.writeText(value); setCopied(what); setTimeout(() => setCopied(null), 1200); } catch {}
+  };
+  const failed = exitCode != null && exitCode !== 0;
+  const duration = startedAt && finishedAt ? finishedAt - startedAt : null;
+
+  useEffect(() => {
+    if (!renderedSnapshot) return;
+    const el = outputRef.current;
+    if (!el) return;
+    const check = () => setOverflowing(el.scrollHeight > el.clientHeight + 2);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [renderedSnapshot, expanded]);
+  const cellClasses = ['notebook-cell'];
+  if (isRunning) cellClasses.push('active-cell');
+  if (failed) cellClasses.push('failed-cell');
+  if (!isRunning && exitCode === 0) cellClasses.push('success-cell');
+
   return (
-    <div className={`notebook-cell ${isRunning ? 'active-cell' : ''}`}>
+    <div className={cellClasses.join(' ')} data-cell-id={id}>
       <div className="cell-header">
         <div className="cell-header-left">
-            <span className="prompt-arrow">❯</span>
+            {isRunning ? (
+                <span className="cell-status running" title="Running"><span className="running-spinner" aria-hidden="true" /></span>
+            ) : failed ? (
+                <span className="cell-status failed" title={`Exit ${exitCode}`}><AlertTriangle size={12} /></span>
+            ) : exitCode === 0 ? (
+                <span className="cell-status success" title="Exit 0"><Check size={12} /></span>
+            ) : (
+                <span className="prompt-arrow">❯</span>
+            )}
             <span className="read-only-command">{initialCommand}</span>
+            {failed && <span className="exit-code-badge" title={`Exit ${exitCode}`}>exit {exitCode}</span>}
         </div>
-        {executablePwd && (
-            <div className="cell-header-breadcrumb" title={executablePwd}>
-                <Folder size={12} color="var(--accent-cyan)" />
-                <span>{executablePwd.split('/').slice(-3).join('/')}</span>
-            </div>
-        )}
+        <div className="cell-header-right">
+            {duration != null && <span className="cell-duration" title={`Took ${duration}ms`}>{formatDuration(duration)}</span>}
+            {startedAt != null && <span className="cell-time" title={new Date(startedAt).toLocaleString()}>{formatTime(startedAt)}</span>}
+            {!isRunning && initialCommand && (
+                <>
+                  <button className="cell-icon-btn" title={copied === 'cmd' ? 'Copied!' : 'Copy command'} onClick={(e) => { e.stopPropagation(); copy('cmd', initialCommand); }}>
+                    {copied === 'cmd' ? <Check size={12} /> : <Copy size={12} />}
+                  </button>
+                  {onRerun && (
+                    <button className="cell-icon-btn" title="Re-run" onClick={(e) => { e.stopPropagation(); onRerun(initialCommand); }}>
+                      <RotateCcw size={12} />
+                    </button>
+                  )}
+                </>
+            )}
+            {executablePwd && (
+                <div className="cell-header-breadcrumb" title={executablePwd}>
+                    <Folder size={12} color="var(--accent-cyan)" />
+                    <span>{executablePwd.split('/').slice(-3).join('/')}</span>
+                </div>
+            )}
+        </div>
       </div>
-      <div className="cell-output" style={{ height: '480px', minHeight: '480px', background: '#000' }}>
-        {renderedSnapshot && (
-          <div className="snapshot-output" dangerouslySetInnerHTML={{ __html: renderedSnapshot }} style={{ width: '100%', height: '100%', overflowY: 'auto' }} />
+      <div className="cell-output-wrap">
+        <div
+          ref={outputRef}
+          className="cell-output"
+          style={
+            usedTui && !isRunning
+              ? { minHeight: '32px', background: '#000', overflow: 'hidden' }
+              : displaySnapshot
+              ? { maxHeight: expanded ? 'none' : '80vh', overflowY: expanded ? 'visible' : 'auto', background: '#000' }
+              : isTuiActive
+                ? { height: '120px', minHeight: '120px', background: '#000' }
+                : (() => {
+                    const lineH = 22;
+                    const padding = 12;
+                    const contentH = Math.max(1, liveContentRows) * lineH + padding;
+                    const maxH = Math.floor(window.innerHeight * 0.8);
+                    const h = Math.min(contentH, maxH);
+                    return { height: `${h}px`, minHeight: '32px', maxHeight: `${maxH}px`, background: '#000', overflow: 'hidden', transition: 'height 0.12s ease-out' };
+                  })()
+          }
+        >
+          {usedTui && !isRunning && (
+            <div className="tui-completed-placeholder">Interactive session ended</div>
+          )}
+          {!usedTui && displaySnapshot && (
+            <div
+              className="snapshot-output"
+              dangerouslySetInnerHTML={{ __html: displaySnapshot }}
+              style={{ width: '100%' }}
+            />
+          )}
+          {!usedTui && !displaySnapshot && isTuiActive && (
+            <div className="tui-placeholder">Interactive TUI session active in modal...</div>
+          )}
+          {!usedTui && !displaySnapshot && !isTuiActive && (
+            <div className="live-terminal" ref={terminalRefCallback} style={{ width: '100%', height: '100%' }} />
+          )}
+        </div>
+        {renderedSnapshot && overflowing && !expanded && (
+          <div className="cell-overflow-hint" onClick={() => setExpanded(true)}>
+            <span>Show all ({Math.ceil((outputRef.current?.scrollHeight || 0) / 22)} lines)</span>
+          </div>
         )}
-        {!renderedSnapshot && isTuiActive && (
-          <div className="tui-placeholder">Interactive TUI session active in modal...</div>
-        )}
-        {!renderedSnapshot && !isTuiActive && (
-          <div className="live-terminal" ref={terminalRefCallback} style={{ width: '100%', height: '100%' }} />
+        {renderedSnapshot && expanded && (
+          <div className="cell-collapse-btn">
+            <button onClick={() => setExpanded(false)}>Collapse</button>
+          </div>
         )}
       </div>
     </div>
