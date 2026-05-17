@@ -1,4 +1,3 @@
-const cp = require('child_process');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
@@ -6,6 +5,7 @@ const os = require('os');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const pty = require('node-pty');
 const { v4: uuidv4 } = require('uuid');
 const { Terminal } = require('@xterm/headless');
 const { SerializeAddon } = require('@xterm/addon-serialize');
@@ -63,9 +63,7 @@ function handleResize(session) {
     const { cols, rows } = calculateMinSize(session);
     debugLog(`[RESIZE] session ${session.id} -> ${cols}x${rows}`);
     try {
-        if (session.resizePipe) {
-            session.resizePipe.write(JSON.stringify({ type: 'resize', rows, cols }) + '\n');
-        }
+        session.ptyProcess.resize(cols, rows);
         if (session.headlessTerminal) {
             session.headlessTerminal.resize(cols, rows);
         }
@@ -84,42 +82,57 @@ function createSession(sessionId) {
   const shell = '/bin/bash';
   const promptSalt = uuidv4().replace(/-/g, '');
   const rcPath = path.join(__dirname, `${config.markerPrefix.toLowerCase()}_bashrc_${sessionId}`);
-  fs.writeFileSync(rcPath, `cd ${projectRoot}; export PS1=' '; export PROMPT_COMMAND='printf \"\\033]133;D;%s;%s\\007\\033]7;file://localhost%s\\007\" \"$?\" \"${promptSalt}\" \"$PWD\"'; stty -echo;\\n`);
-  
+  const rcContent = [
+    `cd ${projectRoot}`,
+    `export PS1=' '`,
+    `export PROMPT_COMMAND='printf "\\033]133;D;%s;%s\\007\\033]7;file://localhost%s\\007" "$?" "${promptSalt}" "$PWD"'`,
+    `export CLICOLOR=1`,
+    `export CLICOLOR_FORCE=1`,
+    `export LSCOLORS='ExGxFxdaCxDaDahbadeche'`,
+    `export TERM=xterm-256color`,
+    `ls() { if /bin/ls --version >/dev/null 2>&1; then command ls --color=auto "$@"; else command ls -G "$@"; fi; }`,
+    `alias grep='grep --color=auto'`,
+    `stty -echo`,
+    ``,
+  ].join('\n');
+  fs.writeFileSync(rcPath, rcContent);
+
   debugLog(`[SESSION_CREATE] ${sessionId}`);
-  const pythonArgs = [path.join(__dirname, 'pty_wrapper.py'), shell, '--rcfile', rcPath, '-i'];
-  const ptyProcess = cp.spawn('python3', pythonArgs, {
+  const ptyProcess = pty.spawn(shell, ['--rcfile', rcPath, '-i'], {
+    name: 'xterm-256color',
+    cols: 120,
+    rows: 24,
     cwd: projectRoot,
     env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', FORCE_COLOR: '3' },
-    stdio: ['pipe', 'pipe', 'pipe', 'pipe']
   });
-  
-  ptyProcess.on('error', (err) => console.error(`[PTY ERROR] ${err}`));
-  ptyProcess.on('exit', (code) => debugLog(`[PTY_EXIT] session ${sessionId} code ${code}`));
 
-  const resizePipe = ptyProcess.stdio[3];
-  const session = { 
-    id: sessionId, 
-    ptyProcess, 
-    resizePipe,
-    activeCellId: null, 
-    isPtyReady: false, 
-    tailBuf: "", 
+  const session = {
+    id: sessionId,
+    ptyProcess,
+    activeCellId: null,
+    isPtyReady: false,
+    tailBuf: "",
     sentPos: 0,
-    clients: new Set(), 
-    cells: [], 
-    pwd: projectRoot, 
-    rcPath, 
-    isTuiActive: false, 
+    clients: new Set(),
+    cells: [],
+    pwd: projectRoot,
+    rcPath,
+    isTuiActive: false,
     pendingQueue: [],
     headlessTerminal: null,
     serializeAddon: null,
-    promptSalt
+    promptSalt,
+    createdAt: Date.now(),
+    lastActivity: Date.now()
   };
   sessions.set(sessionId, session);
 
-  ptyProcess.stdout.on('data', (data) => {
-      const dataStr = data.toString();
+  ptyProcess.onExit(({ exitCode }) => {
+    debugLog(`[PTY_EXIT] session ${sessionId} code ${exitCode}`);
+  });
+
+  ptyProcess.onData((dataStr) => {
+      session.lastActivity = Date.now();
       
       if (dataStr.includes('FORCE_TUI_MODE')) {
           debugLog(`[TUI_ENTER_FORCED] session ${sessionId}`);
@@ -167,6 +180,8 @@ function createSession(sessionId) {
 
       if (dataStr.includes('\x1b[?1049h')) {
           session.isTuiActive = true;
+          const tuiCell = session.cells.find(c => c.id === session.activeCellId);
+          if (tuiCell) tuiCell.usedTui = true;
           for (const ws of session.clients) ws.send(JSON.stringify({ type: 'tui_enter', cellId: session.activeCellId }));
       }
       if (dataStr.includes('\x1b[?1049l')) {
@@ -191,7 +206,15 @@ function createSession(sessionId) {
             const exitHandler = () => {
                 let snapshotAnsi = "";
                 if (session.headlessTerminal && session.serializeAddon) snapshotAnsi = session.serializeAddon.serialize();
-                for (const ws of session.clients) ws.send(JSON.stringify({ type: 'exit', exitCode: currentExitCode, cellId: currentCellId, pwd: currentPwd, snapshotAnsi }));
+                const closedCell = session.cells.find(c => c.id === currentCellId);
+                const wasTui = !!(closedCell && closedCell.usedTui);
+                if (closedCell) {
+                    closedCell.snapshotAnsi = wasTui ? "" : snapshotAnsi;
+                    closedCell.exitCode = currentExitCode;
+                    closedCell.pwd = currentPwd;
+                    closedCell.usedTui = wasTui;
+                }
+                for (const ws of session.clients) ws.send(JSON.stringify({ type: 'exit', exitCode: currentExitCode, cellId: currentCellId, pwd: currentPwd, snapshotAnsi: wasTui ? "" : snapshotAnsi, usedTui: wasTui }));
                 if (session.pendingQueue.length > 0) {
                     const nextCmd = session.pendingQueue.shift();
                     startCommand(session, nextCmd.cellId, nextCmd.data);
@@ -230,9 +253,14 @@ function startCommand(session, cellId, commandData) {
     debugLog(`[COMMAND_START] session ${session.id} cellId=${cellId} cmd=${commandData}`);
     session.activeCellId = cellId; session.isTuiActive = false;
     session.cells.push({ id: cellId, command: commandData, output: "", isRunning: true, executablePwd: session.pwd });
-    if (!session.headlessTerminal) {
+    if (session.headlessTerminal) {
+        try { session.headlessTerminal.dispose(); } catch (e) {}
+        session.headlessTerminal = null;
+        session.serializeAddon = null;
+    }
+    {
         const { cols, rows } = calculateMinSize(session);
-        session.headlessTerminal = new Terminal({ cols, rows, allowProposedApi: true, convertEol: true });
+        session.headlessTerminal = new Terminal({ cols, rows, allowProposedApi: true, convertEol: true, scrollback: 5000 });
         session.serializeAddon = new SerializeAddon();
         session.headlessTerminal.loadAddon(session.serializeAddon);
     }
@@ -247,7 +275,7 @@ function startCommand(session, cellId, commandData) {
         for (const ws of session.clients) if (ws.readyState === 1) ws.send(outputMsg);
         session.tailBuf = ""; session.sentPos = 0;
     } else { session.tailBuf = ""; session.sentPos = 0; }
-    session.ptyProcess.stdin.write(commandData + '\r\n');
+    session.ptyProcess.write(commandData + '\r\n');
 }
 
 wss.on('connection', (ws, req) => {
@@ -255,9 +283,12 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (m) => {
     try {
       const msg = JSON.parse(m.toString());
+      const touched = sessions.get(activeId);
+      if (touched) touched.lastActivity = Date.now();
       if (msg.type === 'join_session') {
         activeId = msg.sessionId || uuidv4();
         const s = createSession(activeId);
+        s.lastActivity = Date.now();
         s.clients.add(ws);
         debugLog(`[WS_JOIN] session ${activeId}`);
         if (msg.cols && msg.rows) { ws.requestedCols = msg.cols; ws.requestedRows = msg.rows; handleResize(s); }
@@ -276,7 +307,7 @@ wss.on('connection', (ws, req) => {
         }
       } else if (msg.type === 'input') {
         const s = sessions.get(activeId);
-        if (s) s.ptyProcess.stdin.write(msg.data);
+        if (s) s.ptyProcess.write(msg.data);
       } else if (msg.type === 'resize') {
         ws.requestedCols = msg.cols; ws.requestedRows = msg.rows;
         const s = sessions.get(activeId);
@@ -287,12 +318,41 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => { if (activeId) { const s = sessions.get(activeId); if (s) s.clients.delete(ws); } });
 });
 
+function destroySession(sessionId, reason) {
+    const s = sessions.get(sessionId);
+    if (!s) return false;
+    debugLog(`[SESSION_DESTROY] ${sessionId} reason=${reason}`);
+    try { if (s.ptyProcess) s.ptyProcess.kill('SIGKILL'); } catch (e) {}
+    try { if (s.headlessTerminal) s.headlessTerminal.dispose(); } catch (e) {}
+    try { if (s.rcPath && fs.existsSync(s.rcPath)) fs.unlinkSync(s.rcPath); } catch (e) {}
+    for (const ws of s.clients) {
+        try { ws.send(JSON.stringify({ type: 'session_destroyed', sessionId, reason })); } catch (e) {}
+    }
+    sessions.delete(sessionId);
+    return true;
+}
+
+const IDLE_TIMEOUT_MS = parseInt(process.env.TERMBOOK_IDLE_TIMEOUT_MS || (60 * 60 * 1000), 10);
+const GC_INTERVAL_MS = 5 * 60 * 1000;
+setInterval(() => {
+    const now = Date.now();
+    for (const [id, s] of sessions.entries()) {
+        if (s.clients.size > 0) continue;
+        if (s.activeCellId) continue;
+        if (now - s.lastActivity > IDLE_TIMEOUT_MS) destroySession(id, 'idle_timeout');
+    }
+}, GC_INTERVAL_MS);
+
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/config', (req, res) => res.json(config));
 app.get('/api/sessions', (req, res) => res.json({ sessions: Array.from(sessions.values()).map(s => ({ id: s.id || "", pwd: s.pwd || "", cells: s.cells || [] })) }));
 app.get('/api/sessions/:id', (req, res) => {
   const s = sessions.get(req.params.id);
   if (s) res.json({ id: s.id, pwd: s.pwd, cells: s.cells });
+  else res.status(404).json({ error: 'Not found' });
+});
+app.delete('/api/sessions/:id', (req, res) => {
+  if (destroySession(req.params.id, 'user_request')) res.json({ ok: true });
   else res.status(404).json({ error: 'Not found' });
 });
 
