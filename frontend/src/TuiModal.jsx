@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import 'xterm/css/xterm.css';
 
-export default function TuiModal({ activeTerminal }) {
+export default function TuiModal({ activeTerminal, requestResize }) {
   const terminalRef = useRef(null);
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -9,45 +9,45 @@ export default function TuiModal({ activeTerminal }) {
     if (!activeTerminal || !terminalRef.current) return;
     const { terminal, fitAddon } = activeTerminal;
 
-    // Ensure correct theme
     terminal.options.theme = { ...terminal.options.theme, background: '#000000' };
     window.__ACTIVE_TERM = terminal;
 
+    let lastCols = -1, lastRows = -1;
     const performFit = () => {
         const el = terminalRef.current;
         if (!el || !terminal.element) return;
         try {
-            // Ask fitAddon for physical dims but do not apply them.
-            // We must send them to the backend to get confirmed.
-            const dims = fitAddon.proposeDimensions();
-            if (dims && dims.cols > 0 && dims.rows > 0) {
-                window.dispatchEvent(new CustomEvent('tui-resize-request', { detail: { cols: dims.cols, rows: dims.rows }}));
+            fitAddon.fit();
+            const cols = terminal.cols;
+            const rows = terminal.rows;
+            if (cols > 0 && rows > 0 && (cols !== lastCols || rows !== lastRows)) {
+                lastCols = cols;
+                lastRows = rows;
+                if (requestResize) requestResize(cols, rows);
+                window.dispatchEvent(new CustomEvent('tui-resize-request', { detail: { cols, rows }}));
             }
-
             requestAnimationFrame(() => {
                 terminal.focus();
                 terminal.refresh(0, terminal.rows - 1);
             });
-        } catch (e) { 
-            console.error("Critical TUI Fit error:", e); 
+        } catch (e) {
+            console.error("TUI Fit error:", e);
         }
     };
-    
-    // Use ResizeObserver on the container to detect when the modal actually has size
-    const ro = new ResizeObserver(() => {
-        performFit();
-    });
-    
-    if (terminalRef.current) {
-        ro.observe(terminalRef.current);
-    }
-    
-    // Initial fits
-    performFit();
-    setTimeout(performFit, 100);
-    setTimeout(performFit, 500);
 
-    const intervalId = setInterval(performFit, 5000);
+    const forceRedraw = () => {
+        if (!terminal.element) return;
+        try { terminal.refresh(0, terminal.rows - 1); } catch (e) {}
+    };
+
+    const ro = new ResizeObserver(() => performFit());
+    ro.observe(terminalRef.current);
+
+    performFit();
+    const t1 = setTimeout(performFit, 50);
+    const t2 = setTimeout(() => { performFit(); forceRedraw(); }, 200);
+    const t3 = setTimeout(forceRedraw, 500);
+    const t4 = setTimeout(forceRedraw, 1000);
 
     let debounceTimer;
     const resizeHandler = () => {
@@ -58,7 +58,7 @@ export default function TuiModal({ activeTerminal }) {
 
     return () => {
         ro.disconnect();
-        clearInterval(intervalId);
+        clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
         window.removeEventListener('resize', resizeHandler);
         clearTimeout(debounceTimer);
     };
