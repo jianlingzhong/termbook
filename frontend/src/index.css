@@ -23,7 +23,7 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
 .top-header { height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 40px; border-bottom: 1px solid var(--border-light); background: var(--bg-obsidian); flex-shrink: 0; z-index: 50; }
 .pwd-breadcrumb { display: flex; align-items: center; gap: 8px; font-family: "JetBrains Mono", monospace; font-size: 13px; background: rgba(255, 255, 255, 0.04); padding: 7px 16px; border-radius: 99px; border: 1px solid var(--border-light); color: var(--text-secondary); max-width: 60vw; min-width: 0; }
 .pwd-breadcrumb-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.notebook-content { flex: 1; overflow-y: scroll; padding: 48px; display: flex; flex-direction: column; scroll-behavior: smooth; }
+.notebook-content { flex: 1; overflow-y: scroll; padding: 48px max(48px, calc((100% - 1800px) / 2)); display: flex; flex-direction: column; scroll-behavior: smooth; }
 .notebook-cell { margin-bottom: 32px; background: var(--bg-cell); border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2); overflow: hidden; box-shadow: 0 12px 32px rgba(0,0,0,0.3); display: flex; flex-direction: column; width: 100%; min-height: fit-content; }
 .notebook-cell.active-cell { border-color: var(--border-active); box-shadow: 0 0 24px rgba(0, 236, 236, 0.2); }
 .notebook-cell.failed-cell { border-color: rgba(239, 68, 68, 0.35); }
@@ -89,8 +89,8 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
 }
 .prompt-arrow { color: var(--accent-cyan) !important; font-weight: 900; font-family: "JetBrains Mono", monospace; font-size: 16px; margin-right: 4px; }
 .read-only-command { font-family: "JetBrains Mono", monospace; color: #ffffff; font-size: 15px; font-weight: 600; word-break: break-all; white-space: pre-wrap; line-height: 1.6; }
-.cell-output { padding: 4px 16px; min-height: 24px; overflow-y: auto; display: block; background: #000000 !important; position: relative; width: 100%; box-sizing: border-box; transition: height 0.2s ease-out; }
-.snapshot-output { font-family: "JetBrains Mono", monospace; font-size: 13px; line-height: 1.6; color: var(--text-primary); white-space: pre; overflow-x: auto; display: block; width: 100%; }
+.cell-output { padding: 4px 16px; min-height: 24px; overflow: auto; display: block; background: #000000 !important; position: relative; width: 100%; box-sizing: border-box; transition: height 0.2s ease-out; }
+.snapshot-output { font-family: "JetBrains Mono", monospace; font-size: 13px; line-height: 1.6; color: var(--text-primary); white-space: pre; display: block; width: max-content; min-width: 100%; }
 .live-terminal { width: 100% !important; height: auto !important; }
 .live-terminal .xterm { width: 100% !important; padding: 4px 0; }
 .live-terminal .xterm-rows { width: 100% !important; }
@@ -115,14 +115,14 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
 .cell-collapse-btn { display: flex; justify-content: center; padding: 8px; background: #000; }
 .cell-collapse-btn button { font-size: 11px; color: var(--text-muted); background: transparent; border: 1px solid rgba(255,255,255,0.1); padding: 4px 14px; border-radius: 99px; cursor: pointer; font-family: "JetBrains Mono", monospace; }
 .cell-collapse-btn button:hover { color: var(--accent-cyan); border-color: var(--accent-cyan); }
-.chat-input-wrapper { pointer-events: auto; background: var(--bg-panel); backdrop-filter: blur(40px); border: 1px solid var(--border-active); border-radius: 14px; padding: 16px 28px; display: flex; align-items: center; gap: 12px; width: 100%; max-width: 960px; box-shadow: 0 16px 48px rgba(0,0,0,0.7); position: relative; overflow: hidden; transition: border-color 0.2s, opacity 0.2s; }
+.chat-input-wrapper { pointer-events: auto; background: var(--bg-panel); backdrop-filter: blur(40px); border: 1px solid var(--border-active); border-radius: 14px; padding: 16px 28px; display: flex; align-items: center; gap: 12px; width: 100%; max-width: min(1600px, calc(100% - 80px)); box-shadow: 0 16px 48px rgba(0,0,0,0.7); position: relative; overflow: hidden; transition: border-color 0.2s, opacity 0.2s; }
 .chat-input-wrapper.is-running { border-color: rgba(0,236,236,0.15); opacity: 0.65; }
 .chat-input-wrapper.is-running textarea { cursor: not-allowed; }
 .chat-input-wrapper.is-tui { border-color: rgba(255,189,46,0.35); opacity: 0.7; }
 .running-spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(0,236,236,0.2); border-top-color: var(--accent-cyan); display: inline-block; animation: tb-spin 0.8s linear infinite; }
 @keyframes tb-spin { to { transform: rotate(360deg); } }
 .pwd-prompt-prefix { font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--accent-cyan); font-weight: 600; white-space: nowrap; flex-shrink: 0; }
-.chat-input-wrapper textarea { flex: 1; background: transparent; border: none; color: var(--text-primary); font-family: "JetBrains Mono", monospace; outline: none; z-index: 5; position: relative; min-width: 0; font-size: 14px; line-height: 24px; padding: 0; }
+.chat-input-wrapper textarea { flex: 1; background: transparent; border: none; color: var(--text-primary); font-family: "JetBrains Mono", monospace; outline: none; z-index: 5; position: relative; min-width: 0; font-size: 14px; line-height: 24px; padding: 0; word-break: break-all; overflow-wrap: anywhere; white-space: pre-wrap; }
 .ghost-suggestion-text { position: absolute; left: 0; padding-left: 142px; width: 100%; color: #374151; font-family: "JetBrains Mono", monospace; font-size: 14px; pointer-events: none; z-index: 1; white-space: pre; opacity: 0.8; margin-top: 1px; }
 .tui-modal-overlay { 
   position: fixed; 
@@ -137,12 +137,12 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
 }
 
 .tui-window {
-  width: 80vw;
-  height: 80vh;
+  width: 90vw;
+  height: 85vh;
   min-width: 600px;
   min-height: 400px;
-  max-width: 1400px;
-  max-height: 900px;
+  max-width: 1800px;
+  max-height: 1200px;
   background: #000;
   border-radius: 12px;
   overflow: hidden;
