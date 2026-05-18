@@ -287,16 +287,24 @@ function createSession(sessionId) {
             const currentExitCode = finishMatch.exitCode;
             const exitHandler = () => {
                 let snapshotAnsi = "";
-                if (session.headlessTerminal && session.serializeAddon) snapshotAnsi = session.serializeAddon.serialize();
+                let snapshotCols = 120;
+                let snapshotRows = 24;
+                if (session.headlessTerminal && session.serializeAddon) {
+                    snapshotAnsi = session.serializeAddon.serialize();
+                    snapshotCols = session.headlessTerminal.cols;
+                    snapshotRows = session.headlessTerminal.rows;
+                }
                 const closedCell = session.cells.find(c => c.id === currentCellId);
                 const wasTui = !!(closedCell && (closedCell.usedTui || closedCell.inlineTuiLike));
                 if (closedCell) {
                     closedCell.snapshotAnsi = wasTui ? "" : snapshotAnsi;
+                    closedCell.snapshotCols = snapshotCols;
+                    closedCell.snapshotRows = snapshotRows;
                     closedCell.exitCode = currentExitCode;
                     closedCell.pwd = currentPwd;
                     closedCell.usedTui = wasTui;
                 }
-                for (const ws of session.clients) ws.send(JSON.stringify({ type: 'exit', exitCode: currentExitCode, cellId: currentCellId, pwd: currentPwd, snapshotAnsi: wasTui ? "" : snapshotAnsi, usedTui: wasTui }));
+                for (const ws of session.clients) ws.send(JSON.stringify({ type: 'exit', exitCode: currentExitCode, cellId: currentCellId, pwd: currentPwd, snapshotAnsi: wasTui ? "" : snapshotAnsi, snapshotCols, snapshotRows, usedTui: wasTui }));
                 if (session.pendingQueue.length > 0) {
                     const nextCmd = session.pendingQueue.shift();
                     startCommand(session, nextCmd.cellId, nextCmd.data);
