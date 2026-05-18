@@ -323,6 +323,61 @@ If a user reports `ls` showing too few columns: check all three layers.
 
 ---
 
+### Width — safety margin and SerializeAddon font {#width-safety}
+
+Even after the three-layer fix above, the rendered snapshot still
+left empty space on the right on wide displays. Two compounding bugs:
+
+1. **Over-aggressive safety margin in fitAddon.** `NotebookCell.jsx`
+   emitResize was emitting `dims.cols - 4` to avoid a horizontal
+   scrollbar. On a 1920px display that wasted 4 columns × ~9px ≈ 36px,
+   PLUS prevented `ls` from picking a 3-column layout it would otherwise
+   have chosen. Reduced to `dims.cols - 1`. 1 column is still enough
+   slack to avoid sub-pixel rounding triggering a scrollbar.
+
+2. **SerializeAddon bakes in `courier-new` 15px via inline styles.**
+   The temp Terminal renders the snapshot HTML with inline
+   `font-family: courier-new, courier, monospace; font-size: 15px`
+   embedded in every row's outer `<div>`. Courier-new is wider than our
+   CSS-declared `JetBrains Mono` 13px, and the inline style overrides
+   the CSS. Result: a 145-col snapshot rendered to ~1450px instead of
+   ~1250px... and then on a 1500px-wide cell, looked like wasted space
+   to the right because the chars were oversized but the row count was
+   fixed by the PTY cols.
+
+   Fix: strip `font-family:` and `font-size:` from the SerializeAddon
+   HTML during cleanup, so the snapshot inherits the parent's
+   `JetBrains Mono` 13px.
+
+**Don't**: bump the safety margin back up. There's a regression test
+("PTY uses available horizontal space (ls fills width)") in
+`regression.spec.mjs` that asserts a 1600-viewport `ls` snapshot has
+rows ≥140 chars wide.
+
+See `NotebookCell.jsx:123-138` (safety margin) and
+`NotebookCell.jsx:95-104` (font stripping).
+
+---
+
+### Cell header should hug single-line content {#cell-header-hug}
+
+**Was**: `.cell-header` had `min-height: 56px` + `padding: 16px 20px` +
+`align-items: flex-start`. A one-line command like `pwd` produced ~89px
+of header with ~50px of empty dark space below the text — looked like
+a vertical gap before the output, which a user reported.
+
+**Now**: `min-height` removed, padding reduced to `8px 20px`,
+`align-items: center`. Single-line commands produce ~55px headers
+(content height + 2×padding). Multi-line commands still grow naturally
+via `height: auto` and scroll within `max-height: 200px`.
+
+Regression test: "cell header hugs single-line command" asserts header
+height < 64px for a single-line `pwd`.
+
+See `frontend/src/index.css:41-56`.
+
+---
+
 ### Auto-scroll new cells to viewport top
 
 **Was**: when user submitted a command, the new cell's output rendered

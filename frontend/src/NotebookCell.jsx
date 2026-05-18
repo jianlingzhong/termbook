@@ -94,7 +94,14 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
             if (bodyMatch && bodyMatch[1]) cleaned = bodyMatch[1];
             cleaned = cleaned.replace(/color:\s*#000000/g, 'color: #e0e5ff')
                        .replace(/background-color:\s*#ffffff/g, 'background-color: transparent')
-                       .replace(/background-color:\s*#ffff00/g, 'background-color: transparent');
+                       .replace(/background-color:\s*#ffff00/g, 'background-color: transparent')
+                       // SerializeAddon bakes in `font-family: courier-new` and
+                       // `font-size: 15px` which are wider than our CSS choice
+                       // and leave horizontal space empty on wide displays.
+                       // Strip them so the snapshot inherits .snapshot-output's
+                       // JetBrains Mono at 13px.
+                       .replace(/font-family:\s*[^;"']+;?/gi, '')
+                       .replace(/font-size:\s*[^;"']+;?/gi, '');
             cleaned = trimSnapshotRows(cleaned);
             setRenderedSnapshot(cleaned);
             tempTerm.dispose();
@@ -126,7 +133,10 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
                 fitAddon.fit();
                 const dims = fitAddon.proposeDimensions();
                 if (!dims || !requestResize) return;
-                const safeCols = Math.max(10, dims.cols - 4);
+                // 1-col safety margin (was 4) to avoid horizontal scrollbar
+                // due to sub-pixel rounding. Larger margins waste 3+ cols of
+                // screen real estate on wide displays.
+                const safeCols = Math.max(10, dims.cols - 1);
                 const safeRows = dims.rows;
                 if (safeCols === lastCols && safeRows === lastRows) return;
                 lastCols = safeCols;
