@@ -94,6 +94,7 @@ function App() {
 
   const userScrolledUpRef = useRef(false);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  const lastCellCountRef = useRef(0);
   const SCROLL_BOTTOM_THRESHOLD = 120;
   useEffect(() => {
     const sc = scrollRef.current; if (!sc) return;
@@ -106,22 +107,51 @@ function App() {
     sc.addEventListener('scroll', onScroll, { passive: true });
     return () => sc.removeEventListener('scroll', onScroll);
   }, []);
+
+  const cells = sessionCells[activeSessionId] || [];
   useEffect(() => {
     const sc = scrollRef.current; if (!sc) return;
-    if (userScrolledUpRef.current) return;
-    sc.scrollTop = sc.scrollHeight;
-  }, [sessionCells]);
+    const cellCount = cells.length;
+    const prevCount = lastCellCountRef.current;
+    lastCellCountRef.current = cellCount;
+    if (cellCount === 0) return;
+
+    if (cellCount > prevCount) {
+      requestAnimationFrame(() => {
+        if (!scrollRef.current) return;
+        const lastCell = scrollRef.current.querySelector('.notebook-cell:last-of-type');
+        if (lastCell) {
+          const offset = lastCell.offsetTop - 16;
+          scrollRef.current.scrollTop = offset;
+          userScrolledUpRef.current = false;
+          setShowJumpToBottom(false);
+        }
+      });
+      return;
+    }
+
+    if (!userScrolledUpRef.current) {
+      const lastCell = sc.querySelector('.notebook-cell:last-of-type');
+      if (lastCell) {
+        const offset = lastCell.offsetTop - 16;
+        if (sc.scrollTop < offset) sc.scrollTop = offset;
+      }
+    }
+  }, [cells]);
+
   useEffect(() => {
     const sc = scrollRef.current; if (!sc) return;
     userScrolledUpRef.current = false;
     setShowJumpToBottom(false);
+    lastCellCountRef.current = (sessionCells[activeSessionId] || []).length;
     sc.scrollTop = sc.scrollHeight;
   }, [activeSessionId]);
+
   const jumpToBottom = () => {
     const sc = scrollRef.current; if (!sc) return;
     userScrolledUpRef.current = false;
     setShowJumpToBottom(false);
-    sc.scrollTop = sc.scrollHeight;
+    sc.scrollTo({ top: sc.scrollHeight, behavior: 'smooth' });
   };
 
   const bootstrappedRef = useRef(false);
@@ -361,6 +391,19 @@ function App() {
       const ws = sessionSockets[activeSessionId];
       if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'start', data: cmd, cellId }));
       setInputValue('');
+
+      requestAnimationFrame(() => {
+        const sc = scrollRef.current;
+        if (!sc) return;
+        const newCell = sc.querySelector(`[data-cell-id="${cellId}"]`);
+        if (newCell) {
+          sc.scrollTop = newCell.offsetTop - 16;
+        } else {
+          sc.scrollTop = sc.scrollHeight;
+        }
+        userScrolledUpRef.current = false;
+        setShowJumpToBottom(false);
+      });
     }
   };
 
@@ -454,7 +497,7 @@ function App() {
                 onRerun={(cmd) => { setInputValue(cmd); refocusInput(); }}
             />
           ))}
-          <div style={{ height: '100px', flexShrink: 0 }} />
+          <div style={{ height: 'calc(100vh - 240px)', flexShrink: 0 }} />
         </div>
         {showJumpToBottom && (
           <button className="jump-to-bottom" onClick={jumpToBottom} title="Jump to bottom">
