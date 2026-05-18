@@ -61,7 +61,7 @@ function trimSnapshotRows(html) {
     return result;
 }
 
-export default function NotebookCell({ id, snapshotAnsi, activeTerminal, initialCommand, executablePwd, isRunning, isTuiActive, requestResize, exitCode, startedAt, finishedAt, usedTui, onRerun }) {
+export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotRows, activeTerminal, initialCommand, executablePwd, isRunning, isTuiActive, requestResize, exitCode, startedAt, finishedAt, usedTui, onRerun }) {
   const terminalRef = useRef(null);
   const [isTerminalAttached, setIsTerminalAttached] = useState(false);
   const [renderedSnapshot, setRenderedSnapshot] = useState(null);
@@ -80,7 +80,9 @@ export default function NotebookCell({ id, snapshotAnsi, activeTerminal, initial
     if (snapshotAnsi && !renderedSnapshot) {
         const tempTerm = new Terminal({
             theme: { background: '#000000', foreground: '#e0e5ff' },
-            rows: 24, cols: 120, allowProposedApi: true,
+            rows: Math.max(24, snapshotRows || 24),
+            cols: Math.max(80, snapshotCols || 120),
+            allowProposedApi: true,
             scrollback: 5000
         });
         const tempSerialize = new SerializeAddon();

@@ -285,7 +285,10 @@ function App() {
         ws.onopen = () => {
             console.log(`[WS] Connected to session ${sessionId}`);
             setSessionSockets(prev => ({ ...prev, [sessionId]: ws }));
-            ws.send(JSON.stringify({ type: 'join_session', sessionId, cols: 120, rows: 24 }));
+            const nc = scrollRef.current;
+            const cellPxWidth = nc ? Math.max(400, nc.clientWidth - 96) : 1200;
+            const cols = Math.max(40, Math.min(500, Math.floor(cellPxWidth / 8.5) - 4));
+            ws.send(JSON.stringify({ type: 'join_session', sessionId, cols, rows: 24 }));
             retryCount = 0;
         };
 
@@ -323,8 +326,8 @@ function App() {
                 const termData = getOrCreateTerminal(sessionId, msg.cellId);
                 termData.terminal.write(msg.data);
             } else if (msg.type === 'exit') {
-                const { cellId, pwd, snapshotAnsi, exitCode, usedTui } = msg;
-                setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshotAnsi, exitCode, finishedAt: Date.now(), usedTui } : c) }));
+                const { cellId, pwd, snapshotAnsi, snapshotCols, snapshotRows, exitCode, usedTui } = msg;
+                setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshotAnsi, snapshotCols, snapshotRows, exitCode, finishedAt: Date.now(), usedTui } : c) }));
                 setSessionRunning(prev => ({ ...prev, [sessionId]: false }));
                 if (pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: pwd }));
                 const termData = sessionTerminals.current[`${sessionId}-${cellId}`];
@@ -483,7 +486,9 @@ function App() {
             <NotebookCell 
                 key={c.id} 
                 id={c.id} 
-                snapshotAnsi={c.snapshotAnsi} 
+                snapshotAnsi={c.snapshotAnsi}
+                snapshotCols={c.snapshotCols}
+                snapshotRows={c.snapshotRows} 
                 initialCommand={c.command} 
                 executablePwd={c.executablePwd} 
                 activeTerminal={getOrCreateTerminal(activeSessionId, c.id)} 
