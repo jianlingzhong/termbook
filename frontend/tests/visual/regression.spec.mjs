@@ -162,4 +162,43 @@ test.describe('regression', () => {
         expect(ids.length).toBeGreaterThanOrEqual(1);
         expect(new Set(ids).size).toBe(ids.length);
     });
+
+    // Header should hug its single-line content, not waste ~40-50px of
+    // vertical space below the command text. Caused by min-height: 56px
+    // + padding: 16px + align-items: flex-start. With a one-line command
+    // the header should be roughly 32-56px tall, not 80+.
+    test('cell header hugs single-line command (no big gap inside header)', async ({ page }) => {
+        await gotoFreshSession(page);
+        await runCommand(page, 'pwd', 1500);
+        const headerH = await page.locator('.notebook-cell .cell-header').first().evaluate(
+            el => Math.round(el.getBoundingClientRect().height)
+        );
+        // Single-line command + status icon = ~24px content + 2x padding.
+        // Allow up to 56px (single-line + comfortable padding). 80+ is the bug.
+        expect(headerH).toBeLessThan(64);
+    });
+
+    // PTY column count must actually use the visible cell width, not
+    // leave a third of the horizontal space empty. With a 1600px viewport
+    // and ~280px sidebar + 96px padding, the live PTY should get ~155+
+    // cols, not ~120.
+    test('PTY uses available horizontal space (ls fills width)', async ({ page }) => {
+        await gotoFreshSession(page);
+        await runCommand(page, 'ls', 2500);
+        const data = await page.evaluate(() => {
+            const cell = document.querySelector('.notebook-cell');
+            const output = cell?.querySelector('.cell-output');
+            const snapshot = cell?.querySelector('.snapshot-output');
+            const rowDivs = snapshot?.querySelectorAll('pre > div > div') || [];
+            const firstRow = rowDivs[0];
+            return {
+                outputWidth: output?.getBoundingClientRect().width || 0,
+                firstRowCharCount: firstRow?.textContent.length || 0,
+            };
+        });
+        // outputWidth at 1600 viewport is ~1208px. With a 9px char width
+        // we should fit at least 130 columns. The bug was 120 or less.
+        expect(data.outputWidth).toBeGreaterThan(1000);
+        expect(data.firstRowCharCount).toBeGreaterThan(140);
+    });
 });
