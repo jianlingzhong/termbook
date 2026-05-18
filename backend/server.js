@@ -2,6 +2,7 @@ const express = require('express');
 const { WebSocketServer } = require('ws');
 const http = require('http');
 const os = require('os');
+const cp = require('child_process');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
@@ -36,7 +37,8 @@ function cleanupZombies() {
   for (const [id, session] of sessions.entries()) {
     try {
         if (session.ptyProcess) session.ptyProcess.kill();
-        if (fs.existsSync(session.rcPath)) fs.unlinkSync(session.rcPath);
+        if (session.rcPath && fs.existsSync(session.rcPath)) fs.unlinkSync(session.rcPath);
+        if (session.rcDir && fs.existsSync(session.rcDir)) fs.rmSync(session.rcDir, { recursive: true, force: true });
     } catch (e) {
         console.error(`Error cleaning up session ${id}:`, e);
     }
@@ -76,15 +78,68 @@ function handleResize(session) {
     }
 }
 
-function createSession(sessionId) {
-  if (sessions.has(sessionId)) return sessions.get(sessionId);
-  const projectRoot = path.join(__dirname, '..');
-  const shell = '/bin/bash';
-  const promptSalt = uuidv4().replace(/-/g, '');
-  const rcPath = path.join(__dirname, `${config.markerPrefix.toLowerCase()}_bashrc_${sessionId}`);
-  const rcContent = [
-    `cd ${projectRoot}`,
+function detectUserShell() {
+  const envShell = process.env.SHELL;
+  if (envShell && fs.existsSync(envShell)) return envShell;
+  try {
+    const out = cp.execSync(`dscl . -read /Users/${process.env.USER} UserShell 2>/dev/null`).toString();
+    const m = out.match(/UserShell:\s*(\S+)/);
+    if (m && fs.existsSync(m[1])) return m[1];
+  } catch (e) {}
+  try {
+    const out = cp.execSync(`getent passwd ${process.env.USER} 2>/dev/null`).toString();
+    const parts = out.trim().split(':');
+    if (parts[6] && fs.existsSync(parts[6])) return parts[6];
+  } catch (e) {}
+  return '/bin/bash';
+}
+
+const USER_SHELL = detectUserShell();
+const USER_SHELL_NAME = path.basename(USER_SHELL);
+debugLog(`[SHELL_DETECT] using ${USER_SHELL} (${USER_SHELL_NAME})`);
+
+function extractUserAliases() {
+  const aliasLines = [];
+  const candidates = [
+    path.join(os.homedir(), '.aliases'),
+    path.join(os.homedir(), '.bash_aliases'),
+    path.join(os.homedir(), '.bashrc'),
+    path.join(os.homedir(), '.zshrc'),
+    path.join(os.homedir(), '.bash_profile'),
+    path.join(os.homedir(), '.profile'),
+  ];
+  for (const f of candidates) {
+    try {
+      if (!fs.existsSync(f)) continue;
+      const content = fs.readFileSync(f, 'utf8');
+      for (const raw of content.split('\n')) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#')) continue;
+        const m = line.match(/^alias\s+([A-Za-z_][\w-]*)=(.+?)\s*(?:#.*)?$/);
+        if (m) aliasLines.push(`alias ${m[1]}=${m[2]}`);
+      }
+    } catch {}
+  }
+  const seen = new Set();
+  const deduped = [];
+  for (const l of aliasLines) {
+    const key = l.split('=')[0];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(l);
+  }
+  return deduped;
+}
+
+const USER_ALIASES = extractUserAliases();
+debugLog(`[ALIASES] imported ${USER_ALIASES.length} from user rc files`);
+
+
+function buildBashRc(promptSalt, projectRoot) {
+  return [
+    `cd ${JSON.stringify(projectRoot)}`,
     `export PS1=' '`,
+    `export PS2=' '`,
     `export PROMPT_COMMAND='printf "\\033]133;D;%s;%s\\007\\033]7;file://localhost%s\\007" "$?" "${promptSalt}" "$PWD"'`,
     `export CLICOLOR=1`,
     `export CLICOLOR_FORCE=1`,
@@ -92,12 +147,22 @@ function createSession(sessionId) {
     `export TERM=xterm-256color`,
     `ls() { if /bin/ls --version >/dev/null 2>&1; then command ls --color=auto "$@"; else command ls -G "$@"; fi; }`,
     `alias grep='grep --color=auto'`,
+    ...USER_ALIASES,
     `stty -echo`,
     ``,
   ].join('\n');
-  fs.writeFileSync(rcPath, rcContent);
+}
 
-  debugLog(`[SESSION_CREATE] ${sessionId}`);
+function createSession(sessionId) {
+  if (sessions.has(sessionId)) return sessions.get(sessionId);
+  const projectRoot = path.join(__dirname, '..');
+  const promptSalt = uuidv4().replace(/-/g, '');
+  const shell = '/bin/bash';
+  const rcPath = path.join(__dirname, `${config.markerPrefix.toLowerCase()}_bashrc_${sessionId}`);
+  const rcDir = null;
+  fs.writeFileSync(rcPath, buildBashRc(promptSalt, projectRoot));
+
+  debugLog(`[SESSION_CREATE] ${sessionId} shell=${shell} (user default: ${USER_SHELL}, imported ${USER_ALIASES.length} aliases)`);
   const ptyProcess = pty.spawn(shell, ['--rcfile', rcPath, '-i'], {
     name: 'xterm-256color',
     cols: 120,
@@ -117,6 +182,7 @@ function createSession(sessionId) {
     cells: [],
     pwd: projectRoot,
     rcPath,
+    rcDir,
     isTuiActive: false,
     pendingQueue: [],
     headlessTerminal: null,
@@ -189,7 +255,22 @@ function createSession(sessionId) {
           for (const ws of session.clients) ws.send(JSON.stringify({ type: 'tui_exit', cellId: session.activeCellId }));
       }
 
+      if (session.activeCellId) {
+          const cellRef = session.cells.find(c => c.id === session.activeCellId);
+          if (cellRef && !cellRef.usedTui) {
+              const cursorMoves = (dataStr.match(/\x1b\[\d*;\d*[Hf]/g) || []).length
+                                + (dataStr.match(/\x1b\[\d*[ABCDEFG]/g) || []).length;
+              const clearOps = (dataStr.match(/\x1b\[[0-3]?[JK]/g) || []).length;
+              const hideCursor = dataStr.includes('\x1b[?25l');
+              cellRef._ansiScore = (cellRef._ansiScore || 0) + cursorMoves + clearOps * 2 + (hideCursor ? 5 : 0);
+              if (cellRef._ansiScore > 40) cellRef.inlineTuiLike = true;
+          }
+      }
+
       const finishMatch = parseOutput(session.tailBuf, session.promptSalt);
+      if (session.activeCellId && finishMatch) {
+          debugLog(`[FINISH] exit=${finishMatch.exitCode} pwd=${JSON.stringify(finishMatch.pwd)}`);
+      }
       if (session.activeCellId) {
         const cell = session.cells.find(c => c.id === session.activeCellId);
         if (finishMatch && !session.isTuiActive) {
@@ -201,13 +282,14 @@ function createSession(sessionId) {
             }
             if (cell) cell.isRunning = false;
             const currentCellId = session.activeCellId;
-            const currentPwd = finishMatch.pwd;
+            const currentPwd = finishMatch.pwd || session.pwd;
+            if (finishMatch.pwd) session.pwd = finishMatch.pwd;
             const currentExitCode = finishMatch.exitCode;
             const exitHandler = () => {
                 let snapshotAnsi = "";
                 if (session.headlessTerminal && session.serializeAddon) snapshotAnsi = session.serializeAddon.serialize();
                 const closedCell = session.cells.find(c => c.id === currentCellId);
-                const wasTui = !!(closedCell && closedCell.usedTui);
+                const wasTui = !!(closedCell && (closedCell.usedTui || closedCell.inlineTuiLike));
                 if (closedCell) {
                     closedCell.snapshotAnsi = wasTui ? "" : snapshotAnsi;
                     closedCell.exitCode = currentExitCode;
@@ -235,7 +317,7 @@ function createSession(sessionId) {
       } else {
           if (finishMatch && !session.isPtyReady) {
               session.isPtyReady = true;
-              session.pwd = finishMatch.pwd;
+              if (finishMatch.pwd) session.pwd = finishMatch.pwd;
               session.tailBuf = session.tailBuf.substring(finishMatch.matchEnd);
               session.sentPos = 0;
           }
@@ -325,6 +407,7 @@ function destroySession(sessionId, reason) {
     try { if (s.ptyProcess) s.ptyProcess.kill('SIGKILL'); } catch (e) {}
     try { if (s.headlessTerminal) s.headlessTerminal.dispose(); } catch (e) {}
     try { if (s.rcPath && fs.existsSync(s.rcPath)) fs.unlinkSync(s.rcPath); } catch (e) {}
+    try { if (s.rcDir && fs.existsSync(s.rcDir)) fs.rmSync(s.rcDir, { recursive: true, force: true }); } catch (e) {}
     for (const ws of s.clients) {
         try { ws.send(JSON.stringify({ type: 'session_destroyed', sessionId, reason })); } catch (e) {}
     }
