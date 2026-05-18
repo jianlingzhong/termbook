@@ -146,29 +146,43 @@ test.describe('motion stability', () => {
         expect(v).toBe('echo after');
     });
 
-    test('jump-to-bottom appears when scrolled away and dismisses on click', async ({ page }) => {
+    test('jump-to-bottom appears when user scrolls up away from active stream', async ({ page }) => {
         await gotoFreshSession(page);
         for (let i = 0; i < 5; i++) await runCommand(page, `echo line-${i}`, 600);
 
-        // Scroll up
         await page.evaluate(() => {
             const sc = document.querySelector('.notebook-content');
             if (sc) sc.scrollTop = 0;
         });
         await page.waitForTimeout(400);
 
-        // Run another command — jump-to-bottom should appear
-        await runCommand(page, 'echo last', 1500);
         const visible = await page.locator('.jump-to-bottom').isVisible().catch(() => false);
-        expect(visible, 'jump-to-bottom should appear when scrolled away').toBe(true);
+        expect(visible, 'jump-to-bottom should appear when scrolled away from latest').toBe(true);
 
-        // Click it — should scroll to bottom
         await page.locator('.jump-to-bottom').click();
-        await page.waitForTimeout(500);
+        await page.waitForTimeout(800);
         const atBottom = await page.evaluate(() => {
             const sc = document.querySelector('.notebook-content');
             return sc ? sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 10 : false;
         });
         expect(atBottom).toBe(true);
+    });
+
+    test('submitting a new command brings the new cell to the top of viewport', async ({ page }) => {
+        await gotoFreshSession(page);
+        for (let i = 0; i < 4; i++) await runCommand(page, `seq 1 10 # cell ${i}`, 1200);
+        await runCommand(page, 'echo LATEST', 1500);
+
+        const info = await page.evaluate(() => {
+            const cells = Array.from(document.querySelectorAll('.notebook-cell'));
+            const last = cells[cells.length - 1];
+            if (!last) return null;
+            return {
+                cellTop: Math.round(last.getBoundingClientRect().top),
+                viewportH: window.innerHeight,
+            };
+        });
+        expect(info).not.toBeNull();
+        expect(info.cellTop, 'new cell header should be near the top of viewport').toBeLessThan(info.viewportH / 2);
     });
 });
