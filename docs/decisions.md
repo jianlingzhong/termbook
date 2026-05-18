@@ -1,0 +1,466 @@
+# Decisions
+
+Why the code is the way it is. Each entry describes a bug or design
+question, the chosen solution, and the file/line where it lives. Read
+this before changing anything in the named files — you'll otherwise
+re-introduce a bug we already fixed.
+
+Entries are ordered by topic, not chronology. For chronological order
+see `git log --oneline`.
+
+---
+
+## Backend
+
+### node-pty (not the old Python wrapper)
+
+**Was**: `backend/pty_wrapper.py` (deleted) — spawned via
+`child_process.spawn('python3', ...)` with a custom fd-3 JSON protocol
+for resize.
+
+**Why removed**: extra Python process per session, ~50–100ms startup
+penalty, no SIGCHLD handling in the wrapper, `winsize` was hardcoded
+24×80 regardless of client request, and the parent Node would crash
+with `read EIO` on PTY shutdown.
+
+**Now**: `pty.spawn('/bin/bash', ['--rcfile', rcPath, '-i'], {...})` via
+`node-pty` (already a dep). `ptyProcess.onExit` and `onData` handle
+lifecycle and stream. See `backend/server.js:178-200`.
+
+**Trap**: `node-pty`'s prebuilt binary at
+`node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper` may not be
+marked executable after `npm install` on some setups. If `pty.spawn`
+returns `posix_spawnp failed`, `chmod +x` it.
+
+---
+
+### User's default shell (informational, not used) {#shell}
+
+**Decision**: Detect the user's shell via `$SHELL` → `dscl` (macOS) →
+`getent passwd` (Linux), log it, but **always spawn `/bin/bash`** for
+the PTY.
+
+**Why not honor `$SHELL`**: zsh users almost universally run
+oh-my-zsh / powerlevel10k / p10k-instant-prompt. These prompt frameworks
+own the `precmd_functions` array and aggressively reinstall their own
+hooks, overwriting our `__termbook_precmd`. Result: our OSC 133;D
+marker never fires, every cell hangs in "running" forever.
+
+We tried (in order): `precmd_functions=(__termbook_precmd)`,
+`add-zsh-hook precmd __termbook_precmd`, removing the prompt theme
+with `prompt off`. P10k re-wires itself each prompt cycle.
+
+**The compromise**: spawn `/bin/bash` with a clean rcfile we fully
+control, but **import the user's `alias` lines** from their rc files so
+commands like `ll` work.
+
+See `backend/server.js`:
+- `detectUserShell()` ~line 67
+- `extractUserAliases()` ~line 32 (parses `~/.bashrc`, `~/.zshrc`,
+  `~/.aliases`, etc.)
+- `buildBashRc()` ~line 100 (builds the per-session rcfile)
+
+If a future change makes the marker robust under p10k, we can revisit
+launching the user's actual shell.
+
+---
+
+### Salted prompt marker + unsalted fallback
+
+**Decision**: `PROMPT_COMMAND` emits `\033]133;D;<exitCode>;<promptSalt>\007`.
+Parser tries to match the **salted** version first; on failure, falls
+back to any `\033]133;D;<n>\007`.
+
+**Why salt**: without it, a malicious or careless command could spoof
+the marker via stdout and prematurely close its own cell. E.g.
+`echo -e "\x1b]133;D;0\x07"` would falsely terminate.
+
+**Why fallback to unsalted**: many shell-integration setups (iTerm2,
+oh-my-zsh, p10k, the `foot` plugin) emit OSC 133;D **without** our salt.
+If we required the salt, every command in a heavy zsh env would hang.
+
+The fallback is a small security regression we accept for compatibility.
+The salt still helps in pure-bash setups.
+
+See `backend/parser.js:1-30`.
+
+---
+
+### OSC terminators: BEL **and** ST
+
+**Decision**: parser regexes accept both `\x07` (BEL) and `\x1b\\` (ST)
+as OSC string terminators.
+
+**Why**: powerlevel10k emits OSC 7 (`\e]7;file://...`) with ST, not BEL.
+The pwd-capture regex was greedy-stopping at the first `\x07`, which
+sometimes wasn't the actual end of the pwd marker — so it consumed
+trailing bytes including the next `\e]133;D;0\e\` and surfaced
+`]133;D;0` in the breadcrumb UI.
+
+See `backend/parser.js:7-9`.
+
+---
+
+### Per-cell headless terminal reset
+
+**Decision**: in `startCommand`, dispose any existing `headlessTerminal`
+and create a fresh one. Don't reuse across cells.
+
+**Why**: the headless terminal is the source of truth for the cell's
+snapshot. If you reuse it, the previous cell's content bleeds into the
+next snapshot. Originally we did reuse it to "save state across cells"
+which was nonsense — each cell's snapshot should reflect only its own
+output. See `backend/server.js:178-186`.
+
+---
+
+### Inline-TUI detection (the gemini fix)
+
+**Decision**: while a cell is running, count cursor-positioning escape
+sequences (`\e[H`, `\e[A/B/C/D`, `\e[J`, `\e[K`, `\e[?25l`). If the
+total exceeds 40, mark `cell.inlineTuiLike = true`. On cell exit, treat
+inline-TUI-like cells the same as alt-screen-buffer ones: send empty
+`snapshotAnsi` and let the frontend show the "Interactive session
+ended" placeholder.
+
+**Why**: tools like `gemini-cli` don't use the alt-screen buffer
+(`\e[?1049h`) but DO heavily repaint the screen in-place during their
+interactive session. When they exit, the post-quit terminal state is a
+messy mix of half-redrawn UI + goodbye text. Trying to render that as
+a faithful snapshot looks broken (overlapping bars, mid-screen text,
+fragments of the UI). The compact placeholder is just nicer.
+
+See `backend/server.js:230-242`.
+
+---
+
+### Sessions are in-memory only
+
+**Decision**: `sessions = new Map()` in process memory. No SQLite, no
+JSON-on-disk, nothing. Sessions die when the server restarts.
+
+**Why**: simplicity. Termbook is a localhost dev tool. If you want
+persistence across restarts, that's a substantial feature (serialize
+PTY state? Replay terminal output? Re-spawn dead processes?). Not worth
+it for the use case.
+
+What IS persisted: snapshots on completed cells, so reload works as
+long as the server stays up.
+
+See `backend/server.js:13` and `destroySession()` ~line 380.
+
+---
+
+### Idle session GC
+
+**Decision**: every 5 minutes, sweep sessions; destroy any that have
+zero connected clients AND no active cell AND haven't seen activity in
+`TERMBOOK_IDLE_TIMEOUT_MS` (default 1 hour).
+
+**Why**: without it, every browser tab you ever opened leaves a bash
+process and a `termbook_bashrc_*` rcfile forever. Eventually you get
+hundreds of orphan processes.
+
+See `backend/server.js:399-410`.
+
+---
+
+### PTY stderr/stdio error handlers
+
+**Decision**: every `pty.spawn()` result gets explicit
+`.on('error', () => {})` handlers on stdout, stderr, and the (now-unused)
+resize pipe.
+
+**Why**: when the PTY child exits abruptly, node-pty propagates a
+`read EIO` error event from the stream. With no handler, Node crashes
+the entire backend with "unhandled 'error' event". One-line fix that
+prevents the entire app dying.
+
+See `backend/server.js:202-205`.
+
+---
+
+## Frontend
+
+### `liveContentRows` for cell sizing
+
+**Was**: cell-output had inline `style={{ height: '480px', minHeight: '480px' }}`
+unconditionally when not yet rendered as a snapshot. Tiny commands like
+`pwd` flashed a 480px black box for 200–300ms before snapping to a
+50px snapshot. The user reported this as a flash.
+
+**Why was it 480px**: the xterm.js Terminal element has its own natural
+size (24 rows × 19px ≈ 456px). Whatever you put around it, it'll render
+at that size. To make the cell hug content, we need to know how many
+rows xterm has actually written to, and size the container to that.
+
+**Now**: a `setInterval(updateContentRows, 80)` polls
+`terminal.buffer.active.cursorY + baseY` to compute used rows, sets
+`liveContentRows` state. The cell-output `style` computes height as
+`max(1, liveContentRows) * 22 + 12` px capped at 80vh.
+
+See `NotebookCell.jsx:144-158` (poll) and `NotebookCell.jsx:232-250`
+(style).
+
+**Don't**: hardcode `height: '480px'` back. There's a regression test
+in `frontend/tests/visual/motion.spec.mjs` ("short command (pwd) does
+not flash a 480px live box") that polls and asserts max height < 200px.
+
+---
+
+### Plain-HTML placeholder for snapshot loading
+
+**Was**: when a cell hydrates from `snapshotAnsi`, the
+ANSI→HTML rendering is async (xterm's `write(data, cb)` is callback-
+based). Between mount and the callback firing, `renderedSnapshot` was
+null, so the cell fell into the live-terminal branch and rendered an
+empty 480px box for one frame. Visible as a flash on page reload.
+
+**Now**: `ansiToPlainHtml(snapshotAnsi)` synchronously strips ANSI
+escapes and produces a `<pre>` of plain text. `displaySnapshot =
+renderedSnapshot ?? plainPlaceholder`. The cell renders the placeholder
+immediately on mount, then seamlessly upgrades to the styled HTML when
+ready. No flash.
+
+See `NotebookCell.jsx:21-33` (helpers) and `NotebookCell.jsx:76` (memo).
+
+---
+
+### TUI modal must call `fitAddon.fit()`, not `proposeDimensions()`
+
+**Was**: `TuiModal.jsx` computed dimensions via
+`fitAddon.proposeDimensions()` and forwarded them to the backend with
+`requestResize`. The PTY got resized correctly (vim/top knew the new
+dimensions), but **the local xterm canvas stayed at its old 80×24
+size**. Result: vim drew at 80×24 in the top-left of a huge modal,
+leaving 75% black space.
+
+**Why**: `proposeDimensions()` is read-only — it returns suggested dims
+without applying them. `fitAddon.fit()` actually calls `terminal.resize()`.
+
+**Now**: TuiModal calls `fitAddon.fit()` first, then reads
+`terminal.cols`/`rows`, then sends to backend. Local xterm and PTY stay
+in sync.
+
+See `TuiModal.jsx:23-36`.
+
+---
+
+### Field name: `activeCellId` vs `cellId` on `tui_enter`
+
+**Was**: backend `server.js` sent `{ type: 'tui_enter', cellId: ... }`.
+Frontend read `msg.activeCellId`, which was always `undefined`. Result:
+`activeTuiState.cellId = undefined`, `getOrCreateTerminal(sessionId,
+undefined)` keyed a different terminal instance than the one receiving
+output. The modal mounted but never showed any vim content — blank.
+
+**Now**: frontend reads `msg.activeCellId ?? msg.cellId` for safety. We
+also normalized `session_init` the same way.
+
+See `App.jsx:299` (session_init) and `App.jsx:319` (tui_enter).
+
+---
+
+### Don't call `terminal.reset()` on `\x1b[2J`
+
+**Was**: in the WS `output` handler, we previously did:
+```js
+if (msg.data.includes('\x1b[2J') || msg.data.includes('\x1b[3J')) {
+    termData.terminal.clear();
+    termData.terminal.reset();
+}
+```
+This was defensive but **`reset()` exits the alt-screen buffer** on
+xterm.js. Vim sends both `\x1b[?1049h` (enter alt) AND `\x1b[2J`
+(clear screen) in its startup sequence. Our `reset()` undid the alt-
+enter, so vim's drawing went to the normal buffer which wasn't visible.
+
+**Now**: removed the reset entirely. xterm.js handles `\x1b[2J` correctly
+by itself (clears the current buffer, doesn't switch buffers).
+
+See `App.jsx:328-336`.
+
+---
+
+### Width — three places must agree {#width}
+
+The fix that took the most iteration. There are **three** places that
+each independently affect output width; any one being wrong wastes
+horizontal space.
+
+1. **PTY initial cols** — `App.jsx` `ws.onopen` computes:
+   ```js
+   const cellPxWidth = scrollRef.current.clientWidth - 96;
+   const cols = Math.max(40, Math.min(500, Math.floor(cellPxWidth / 8.5) - 4));
+   ws.send({ type: 'join_session', sessionId, cols, rows: 24 });
+   ```
+   **Before this**: hardcoded `cols: 120`. So at 2560px viewport, `ls`
+   would format for 120 cols → 2 columns of files even though the cell
+   could fit 5.
+
+2. **Per-cell resize via fitAddon** — `NotebookCell.jsx` emitResize uses
+   `fitAddon.fit()` (not `proposeDimensions`!) and forwards cols/rows to
+   the backend. Multi-cell dedupe in `App.jsx` `requestResizeFor`
+   prevents the SIGWINCH storm.
+
+3. **Snapshot rendering cols** — `NotebookCell.jsx` snapshot renderer
+   creates a temp Terminal with `cols: snapshotCols, rows: snapshotRows`
+   from the backend's exit message (defaults 80×24 if missing). **Before
+   this**: hardcoded 120×24. So when a 220-col snapshot was rendered to
+   a 120-col temp xterm, output wrapped at 120 and looked broken.
+
+**Plus** the CSS:
+- `.notebook-content` has no `max-width` cap. Was capped at 1800px
+  centered, wasting up to 663px/side on 3440px displays.
+- `.chat-input-wrapper` has `width: calc(100% - 80px)`. Was capped at
+  1600px.
+
+See `App.jsx:308-313`, `NotebookCell.jsx:115-138`,
+`NotebookCell.jsx:79-92`, `backend/server.js:299` (sends
+snapshotCols/Rows), `frontend/src/index.css:26` and `:118`.
+
+If a user reports `ls` showing too few columns: check all three layers.
+
+---
+
+### Auto-scroll new cells to viewport top
+
+**Was**: when user submitted a command, the new cell's output rendered
+at the **bottom** of the visible area. User had to scroll up to read
+the cell header. Felt off — every chat/notebook UI puts the new content
+at the top of the viewport.
+
+**Now**: after submit, `App.jsx` `handleCommand` queues a
+`requestAnimationFrame` that sets `scrollRef.current.scrollTop =
+newCell.offsetTop - 16`. The cell's header lands at the viewport top.
+
+To make this actually possible (the latest cell needs room ABOVE it to
+sit at the top), the bottom of the scrollable area has `height: calc(100vh - 240px)`
+of padding so the latest cell can always reach the top.
+
+See `App.jsx:387-400` (scroll on submit) and `App.jsx:500` (padding).
+
+---
+
+### Focus management
+
+**Was**: input lost focus after every command. User reported as their
+top UX complaint.
+
+**Why was it lost**: while a command runs, `<textarea disabled>` —
+disabled elements cannot receive focus. When the cell finished and
+`disabled` became false, there was no `focus()` call. The textarea
+was un-disabled but un-focused.
+
+**Now**: an `isInputUsable` effect calls `inputRef.current.focus()`
+whenever the input transitions from unusable → usable (page load, cell
+exit, session switch, new session, etc.). Plus a window keydown
+listener: pressing any printable key when the input isn't focused
+auto-focuses it. Plus Escape always focuses.
+
+See `App.jsx:55-92` (focus effect + keydown listener).
+
+---
+
+### Resize storm prevention
+
+**Was**: each cell's `ResizeObserver` fired on every layout micro-shift
+(including the layout shift caused by the cell switching from live to
+snapshot). Each fire sent a `resize` WebSocket message. A single
+`pwd` could generate 5–10 resize events with identical dims.
+
+**Now**: per-cell debounce (200ms) AND per-session dedupe (drop if
+`lastCols === cols && lastRows === rows`). See `NotebookCell.jsx:135-138`
+and `App.jsx` `requestResizeFor` ~line 209.
+
+---
+
+### Cell content does not bleed between cells
+
+**Was**: `headlessTerminal` was created once per session and reused for
+every command. Snapshots of cell N included leftover state from cell
+N−1. Visible as text fragments from previous commands appearing at the
+top of new snapshots.
+
+**Now**: `startCommand` disposes the old headless terminal and creates
+a fresh one (`backend/server.js:178-186`). Each cell's snapshot is its
+own output only.
+
+There's a regression test for this in `tests/visual/regression.spec.mjs`
+("cells do not bleed").
+
+---
+
+### Trim trailing/leading empty rows in snapshot HTML
+
+`xterm`'s `serializeAsHTML()` always produces a full `<div>` per row of
+the buffer (e.g., 24 divs for a 24-row terminal), even if only the
+first 2 rows have content. Without trimming, a `pwd` cell renders as
+2 rows of content + 22 empty rows, making the cell visibly oversized.
+
+`trimSnapshotRows()` in `NotebookCell.jsx:25-47` walks the rows,
+finds the first and last with non-whitespace content, and clips
+everything outside that range.
+
+---
+
+### Sidebar session ID uniqueness
+
+**Was**: `sess-` + `Date.now()` + `Math.floor(Math.random()*1000)`.
+Under React StrictMode (double-mount in dev), two sessions would be
+created in the same millisecond with potentially-colliding random
+suffixes. Sidebar showed duplicate entries.
+
+**Now**: `sess-` + `Date.now()` + `crypto.randomUUID().slice(0,8)`. Plus
+a `bootstrappedRef` to prevent StrictMode from creating two sessions
+in the first place.
+
+See `App.jsx:185-198`.
+
+---
+
+### Empty state only shows for truly-empty sessions
+
+**Was**: empty state check was `(sessionCells[activeSessionId] || []).length === 0`,
+which was truthy for unloaded sessions. When you clicked into a session
+in the sidebar, the welcome page flashed for a moment before the cells
+loaded.
+
+**Now**: `Array.isArray(sessionCells[activeSessionId]) &&
+sessionCells[activeSessionId].length === 0`. Empty state only shows for
+confirmed-empty sessions (the API set it to `[]`), not loading ones.
+
+See `App.jsx:521`.
+
+---
+
+## Tests
+
+### Why a separate Playwright config
+
+`frontend/playwright.config.ts` exists (from the original project) and
+targets `tests/**/*.spec.{js,ts}`. That directory has ~50 abandoned
+audit scripts from earlier debugging that don't pass and shouldn't run.
+
+`frontend/playwright.visual.config.js` targets `tests/visual/*.spec.mjs`
+specifically. The `.mjs` extension keeps it cleanly separated from the
+legacy `.js`/`.ts` specs.
+
+See [`frontend/tests/visual/README.md`](../frontend/tests/visual/README.md).
+
+---
+
+### Motion tests must verify the test catches the bug
+
+For any motion-spec test you add: temporarily revert the fix it's
+testing for, run the test, **confirm it fails**, then restore the fix.
+Otherwise you have a test that always passes regardless of correctness.
+
+The author of this codebase has been bitten by this. The `pwd does not
+flash` test was developed by:
+1. Writing the test.
+2. Running it (passed — suspicious).
+3. Reverting the live-cell-hug fix.
+4. Running it (failed — good, the test actually catches the bug).
+5. Restoring the fix.
+6. Running it (passed — fix verified).
