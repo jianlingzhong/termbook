@@ -11,6 +11,7 @@ const { v4: uuidv4 } = require('uuid');
 const { Terminal } = require('@xterm/headless');
 const { SerializeAddon } = require('@xterm/addon-serialize');
 const { parseOutput } = require('./parser');
+const persistence = require('./persistence');
 
 const configPath = path.join(__dirname, '..', 'app_config.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -31,6 +32,49 @@ app.use(express.json());
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const sessions = new Map();
+
+const db = persistence.openDb();
+if (process.argv.includes('--reset-db')) {
+    persistence.clearAll(db);
+    debugLog(`[DB] cleared all sessions/cells (--reset-db)`);
+}
+
+function persistSession(session) {
+    try { persistence.upsertSession(db, session); } catch (e) { debugLog(`[DB_ERR] upsertSession ${session.id}: ${e.message}`); }
+}
+function persistCell(session, cell) {
+    try {
+        const position = session.cells.findIndex(c => c.id === cell.id);
+        if (position < 0) return;
+        persistence.upsertCell(db, session.id, cell, position);
+    } catch (e) { debugLog(`[DB_ERR] upsertCell ${cell.id}: ${e.message}`); }
+}
+
+const persisted = persistence.loadAllSessions(db);
+debugLog(`[DB] loaded ${persisted.length} persisted sessions`);
+for (const p of persisted) {
+    sessions.set(p.id, {
+        id: p.id,
+        ptyProcess: null,
+        activeCellId: null,
+        isPtyReady: false,
+        tailBuf: '',
+        sentPos: 0,
+        clients: new Set(),
+        cells: p.cells,
+        pwd: p.pwd,
+        rcPath: null,
+        rcDir: null,
+        isTuiActive: false,
+        pendingQueue: [],
+        headlessTerminal: null,
+        serializeAddon: null,
+        promptSalt: null,
+        createdAt: p.createdAt,
+        lastActivity: p.lastActivity,
+        hydrated: true,
+    });
+}
 
 function cleanupZombies() {
   console.log('[*] Cleaning up PTY zombie processes before exit...');
@@ -153,27 +197,43 @@ function buildBashRc(promptSalt, projectRoot) {
   ].join('\n');
 }
 
-function createSession(sessionId) {
-  if (sessions.has(sessionId)) return sessions.get(sessionId);
+function spawnPtyForSession(session) {
   const projectRoot = path.join(__dirname, '..');
+  const startCwd = (session.pwd && fs.existsSync(session.pwd)) ? session.pwd : projectRoot;
   const promptSalt = uuidv4().replace(/-/g, '');
   const shell = '/bin/bash';
-  const rcPath = path.join(__dirname, `${config.markerPrefix.toLowerCase()}_bashrc_${sessionId}`);
-  const rcDir = null;
-  fs.writeFileSync(rcPath, buildBashRc(promptSalt, projectRoot));
-
-  debugLog(`[SESSION_CREATE] ${sessionId} shell=${shell} (user default: ${USER_SHELL}, imported ${USER_ALIASES.length} aliases)`);
+  const rcPath = path.join(__dirname, `${config.markerPrefix.toLowerCase()}_bashrc_${session.id}`);
+  fs.writeFileSync(rcPath, buildBashRc(promptSalt, startCwd));
+  debugLog(`[PTY_SPAWN] session ${session.id} shell=${shell} cwd=${startCwd}`);
   const ptyProcess = pty.spawn(shell, ['--rcfile', rcPath, '-i'], {
     name: 'xterm-256color',
     cols: 120,
     rows: 24,
-    cwd: projectRoot,
+    cwd: startCwd,
     env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', FORCE_COLOR: '3' },
   });
+  session.ptyProcess = ptyProcess;
+  session.promptSalt = promptSalt;
+  session.rcPath = rcPath;
+  session.isPtyReady = false;
+  session.tailBuf = '';
+  session.sentPos = 0;
+  attachPtyHandlers(session);
+  return ptyProcess;
+}
 
+function createSession(sessionId) {
+  const existing = sessions.get(sessionId);
+  if (existing) {
+    if (!existing.ptyProcess) spawnPtyForSession(existing);
+    return existing;
+  }
+  const projectRoot = path.join(__dirname, '..');
+
+  debugLog(`[SESSION_CREATE] ${sessionId} (user shell: ${USER_SHELL}, imported ${USER_ALIASES.length} aliases)`);
   const session = {
     id: sessionId,
-    ptyProcess,
+    ptyProcess: null,
     activeCellId: null,
     isPtyReady: false,
     tailBuf: "",
@@ -181,17 +241,25 @@ function createSession(sessionId) {
     clients: new Set(),
     cells: [],
     pwd: projectRoot,
-    rcPath,
-    rcDir,
+    rcPath: null,
+    rcDir: null,
     isTuiActive: false,
     pendingQueue: [],
     headlessTerminal: null,
     serializeAddon: null,
-    promptSalt,
+    promptSalt: null,
     createdAt: Date.now(),
     lastActivity: Date.now()
   };
   sessions.set(sessionId, session);
+  persistSession(session);
+  spawnPtyForSession(session);
+  return session;
+}
+
+function attachPtyHandlers(session) {
+  const sessionId = session.id;
+  const ptyProcess = session.ptyProcess;
 
   ptyProcess.onExit(({ exitCode }) => {
     debugLog(`[PTY_EXIT] session ${sessionId} code ${exitCode}`);
@@ -283,7 +351,7 @@ function createSession(sessionId) {
             if (cell) cell.isRunning = false;
             const currentCellId = session.activeCellId;
             const currentPwd = finishMatch.pwd || session.pwd;
-            if (finishMatch.pwd) session.pwd = finishMatch.pwd;
+            if (finishMatch.pwd) { session.pwd = finishMatch.pwd; persistSession(session); }
             const currentExitCode = finishMatch.exitCode;
             const exitHandler = () => {
                 let snapshotAnsi = "";
@@ -303,6 +371,8 @@ function createSession(sessionId) {
                     closedCell.exitCode = currentExitCode;
                     closedCell.pwd = currentPwd;
                     closedCell.usedTui = wasTui;
+                    closedCell.finishedAt = Date.now();
+                    persistCell(session, closedCell);
                 }
                 for (const ws of session.clients) ws.send(JSON.stringify({ type: 'exit', exitCode: currentExitCode, cellId: currentCellId, pwd: currentPwd, snapshotAnsi: wasTui ? "" : snapshotAnsi, snapshotCols, snapshotRows, usedTui: wasTui }));
                 if (session.pendingQueue.length > 0) {
@@ -336,13 +406,14 @@ function createSession(sessionId) {
           }
       }
   });
-  return session;
 }
 
 function startCommand(session, cellId, commandData) {
     debugLog(`[COMMAND_START] session ${session.id} cellId=${cellId} cmd=${commandData}`);
     session.activeCellId = cellId; session.isTuiActive = false;
-    session.cells.push({ id: cellId, command: commandData, output: "", isRunning: true, executablePwd: session.pwd });
+    const newCell = { id: cellId, command: commandData, output: "", isRunning: true, executablePwd: session.pwd, startedAt: Date.now() };
+    session.cells.push(newCell);
+    persistCell(session, newCell);
     if (session.headlessTerminal) {
         try { session.headlessTerminal.dispose(); } catch (e) {}
         session.headlessTerminal = null;
@@ -416,6 +487,7 @@ function destroySession(sessionId, reason) {
     try { if (s.headlessTerminal) s.headlessTerminal.dispose(); } catch (e) {}
     try { if (s.rcPath && fs.existsSync(s.rcPath)) fs.unlinkSync(s.rcPath); } catch (e) {}
     try { if (s.rcDir && fs.existsSync(s.rcDir)) fs.rmSync(s.rcDir, { recursive: true, force: true }); } catch (e) {}
+    try { persistence.deleteSession(db, sessionId); } catch (e) { debugLog(`[DB_ERR] deleteSession ${sessionId}: ${e.message}`); }
     for (const ws of s.clients) {
         try { ws.send(JSON.stringify({ type: 'session_destroyed', sessionId, reason })); } catch (e) {}
     }

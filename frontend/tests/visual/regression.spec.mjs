@@ -178,6 +178,34 @@ test.describe('regression', () => {
         expect(headerH).toBeLessThan(64);
     });
 
+    // Cells must survive a backend restart. Tests the SQLite persistence
+    // layer end-to-end: run two commands, restart the backend process,
+    // reload the page, the cells must still be visible.
+    test('cells survive backend restart (persistence)', async ({ page }) => {
+        const { execSync } = await import('node:child_process');
+        const path = await import('node:path');
+        const url = await import('node:url');
+        const here = path.dirname(url.fileURLToPath(import.meta.url));
+        const repoRoot = path.resolve(here, '..', '..', '..');
+
+        await gotoFreshSession(page);
+        await runCommand(page, 'echo PERSIST_MARKER_X', 1500);
+        await runCommand(page, 'echo PERSIST_MARKER_Y', 1500);
+
+        const before = await page.locator('body').innerText();
+        expect(before).toContain('PERSIST_MARKER_X');
+        expect(before).toContain('PERSIST_MARKER_Y');
+
+        execSync('bash scripts/restart_servers.sh', { cwd: repoRoot, env: { ...process.env, CI: 'true' } });
+        await page.waitForTimeout(2500);
+        await page.reload({ waitUntil: 'networkidle' });
+        await page.waitForTimeout(2500);
+
+        const after = await page.locator('body').innerText();
+        expect(after).toContain('PERSIST_MARKER_X');
+        expect(after).toContain('PERSIST_MARKER_Y');
+    });
+
     // PTY column count must actually use the visible cell width, not
     // leave a third of the horizontal space empty. With a 1600px viewport
     // and ~280px sidebar + 96px padding, the live PTY should get ~155+

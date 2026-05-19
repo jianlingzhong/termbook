@@ -39,6 +39,10 @@ Desktop.ini
 *.tmp
 *.txt
 backend/termbook_bashrc_*
+termbook.db
+termbook.db-journal
+termbook.db-wal
+termbook.db-shm
 frontend/screenshots/
 test-results/
 playwright-report/
