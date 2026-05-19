@@ -37,15 +37,28 @@ Powerlevel10k and similar zsh prompt themes actively fight our marker
 injection. Bash with a controlled rcfile is the only setup we found
 reliable.
 
-### Sessions die on server restart
+### PTY processes die on server restart (cells survive)
 
-Restart the backend → all sessions and their PTYs are gone. The
-sidebar will show them as missing on next page load.
+Restart the backend → the live PTYs themselves are gone (their child
+processes can't be re-attached). But session metadata and finished
+cells **are persisted to `termbook.db` (SQLite)** and reload
+automatically on next page load. The user sees their history; a
+fresh PTY is spawned lazily when they next interact with the session.
 
-**Rationale**: serializing a live PTY's state is genuinely hard
-(scrollback, current working dir, environment variables, half-typed
-input, subprocesses…). We don't try. Use mprocs or a stable
-`scripts/restart_servers.sh` invocation so restarts are rare.
+**What's still lost on restart**: in-flight commands (anything that
+was running when the backend went down), shell environment (env vars
+set with `export`, things piped through `source`, etc.), and the
+current working directory drift inside the lost PTY. The session's
+`pwd` is restored from the DB (last finished cell's `pwd`).
+
+**Rationale for not preserving more**: serializing a live PTY's state
+is genuinely hard (scrollback, env vars, half-typed input,
+subprocesses). For now, finished cells + last pwd is the right
+trade-off. Use `scripts/restart_servers.sh` so restarts are rare.
+
+DB lives at repo-root `termbook.db` (override with
+`TERMBOOK_DB_PATH=`). Reset with `node backend/server.js --reset-db`
+or just `rm termbook.db*`.
 
 ### No backend tests
 
@@ -228,5 +241,7 @@ fix" entry should be reconsidered:
 - **User insists on their actual shell** → revisit the marker injection
   via a `LD_PRELOAD`-style approach, or wrap the shell in a tiny
   Rust/Go binary that always emits the marker.
-- **Persistence across server restart** → spawn shells under a session
-  manager (tmux/screen) and reattach on restart.
+- **Live PTY persistence (not just cell metadata)** → spawn shells
+  under a session manager (tmux/screen) and reattach on restart. The
+  current SQLite layer covers finished cells + last pwd, which has
+  been sufficient.
