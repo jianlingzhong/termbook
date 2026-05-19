@@ -288,6 +288,29 @@ The frontend (`App.jsx`) on Tab:
 The hint UI (`.completion-hint`) shows up to 8 candidates inline above
 the input with the active one highlighted and "Tab to cycle" affordance.
 
+## Ctrl+R fuzzy history search
+
+Bash-style reverse-i-search. Pressing Ctrl+R (or Cmd+R) on the input
+opens a centered modal overlay. The data source is the frontend
+`history` state (last 500 commands, deduped by recency, kept in
+`localStorage` under `termbook_history`).
+
+Scoring (in `App.jsx` `fuzzyScore`): exact substring match wins
+(higher score for earlier indexOf); otherwise each character of the
+query must appear in order in the candidate, with adjacent-char hits
+scoring bonus points. No external dependency.
+
+The overlay supports:
+- type to filter
+- ↑/↓ to navigate
+- Ctrl+R to go to the next match
+- Enter to insert the selected command into the input (then close)
+- Esc or outside-click to dismiss
+- mouse hover to preview, click to select
+
+CSS classes: `.history-search-overlay`, `.history-search-modal`,
+`.history-search-row.active`.
+
 ## Telemetry
 
 `debugLog()` in `server.js` appends to `ssr_debug.log` (in the project
