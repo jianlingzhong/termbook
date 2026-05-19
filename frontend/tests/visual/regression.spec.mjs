@@ -392,6 +392,47 @@ test.describe('regression', () => {
         expect(await page.locator('.history-search-overlay').count()).toBe(1);
     });
 
+    // Desktop notifications fire when a long-running command finishes
+    // and the tab/window is not focused. Short commands and focused tabs
+    // must NOT fire.
+    test('long-running command in unfocused tab fires desktop notification', async ({ browser }) => {
+        const ctx = await browser.newContext({
+            viewport: VIEWPORT,
+            permissions: ['notifications'],
+        });
+        const page = await ctx.newPage();
+        const captured = [];
+        await page.exposeFunction('__notify_capture', (n) => captured.push(n));
+        await page.addInitScript(() => {
+            const stub = function(title, opts) {
+                window.__notify_capture({ title, body: opts?.body });
+                return { close: () => {} };
+            };
+            stub.permission = 'granted';
+            stub.requestPermission = () => Promise.resolve('granted');
+            window.Notification = stub;
+        });
+
+        await gotoFreshSession(page);
+        await page.evaluate(() => {
+            Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+            Object.defineProperty(document, 'hasFocus', { value: () => false, configurable: true });
+        });
+
+        await runCommand(page, 'echo short', 1500);
+        expect(captured.length).toBe(0);
+
+        await runCommand(page, 'sleep 6 && echo done', 7500);
+        expect(captured.length).toBe(1);
+        expect(captured[0].title).toContain('finished');
+        expect(captured[0].body).toContain('sleep 6');
+
+        await runCommand(page, 'sleep 6 && false', 7500);
+        expect(captured.length).toBe(2);
+        expect(captured[1].title).toContain('failed');
+        await ctx.close();
+    });
+
     test('Cmd+K palette dismisses with Escape', async ({ page }) => {
         await gotoFreshSession(page);
         const inp = await waitInputReady(page);
