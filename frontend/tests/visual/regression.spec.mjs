@@ -367,6 +367,43 @@ test.describe('regression', () => {
         expect(lastCell.venv || '').toContain('tb_test_venv');
     });
 
+    // Cmd+K opens the action palette. Each action is keyboard-runnable.
+    test('Cmd+K opens command palette and runs an action', async ({ page }) => {
+        await gotoFreshSession(page);
+        const inp = await waitInputReady(page);
+        await inp.focus();
+        await page.keyboard.press('Meta+k');
+        await page.waitForTimeout(300);
+        expect(await page.locator('.palette-modal').count()).toBe(1);
+
+        // Multiple actions should be visible.
+        expect(await page.locator('.palette-row').count()).toBeGreaterThanOrEqual(4);
+
+        // Filter and run "Search command history" via fuzzy match.
+        await page.locator('.palette-modal input').fill('history');
+        await page.waitForTimeout(200);
+        expect(await page.locator('.palette-row').count()).toBe(1);
+        const first = await page.locator('.palette-row').first().textContent();
+        expect(first).toContain('Search command history');
+        await page.locator('.palette-modal input').press('Enter');
+        await page.waitForTimeout(400);
+        // Palette closed, history search opened.
+        expect(await page.locator('.palette-modal').count()).toBe(0);
+        expect(await page.locator('.history-search-overlay').count()).toBe(1);
+    });
+
+    test('Cmd+K palette dismisses with Escape', async ({ page }) => {
+        await gotoFreshSession(page);
+        const inp = await waitInputReady(page);
+        await inp.focus();
+        await page.keyboard.press('Meta+k');
+        await page.waitForTimeout(300);
+        expect(await page.locator('.palette-modal').count()).toBe(1);
+        await page.locator('.palette-modal input').press('Escape');
+        await page.waitForTimeout(300);
+        expect(await page.locator('.palette-modal').count()).toBe(0);
+    });
+
     // Activating a venv must NOT leak the "(venv) " prompt prefix into
     // subsequent cell output. VIRTUAL_ENV_DISABLE_PROMPT=1 in our bashrc
     // prevents the venv activate script from mutating PS1.
