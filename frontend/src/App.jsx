@@ -48,6 +48,7 @@ function App() {
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [draftBeforeHistory, setDraftBeforeHistory] = useState('');
   const [completionState, setCompletionState] = useState(null);
+  const [historySearch, setHistorySearch] = useState(null);
   const pushHistory = (cmd) => {
     setHistory(prev => {
       const next = (prev[prev.length - 1] === cmd ? prev : [...prev, cmd]).slice(-500);
@@ -354,6 +355,40 @@ function App() {
     };
   }, [activeSessionId]);
 
+  const fuzzyScore = (text, query) => {
+    if (!query) return 0;
+    const t = text.toLowerCase();
+    const q = query.toLowerCase();
+    if (t.includes(q)) return 1000 - t.indexOf(q);
+    let ti = 0, score = 0, lastMatch = -1;
+    for (const qc of q) {
+      const found = t.indexOf(qc, ti);
+      if (found === -1) return -1;
+      if (lastMatch !== -1 && found === lastMatch + 1) score += 5;
+      score += 1;
+      lastMatch = found;
+      ti = found + 1;
+    }
+    return score;
+  };
+
+  const historyMatches = (() => {
+    if (!historySearch) return [];
+    const q = historySearch.query;
+    const seen = new Set();
+    const scored = [];
+    for (let i = history.length - 1; i >= 0; i--) {
+      const cmd = history[i];
+      if (seen.has(cmd)) continue;
+      seen.add(cmd);
+      const score = q ? fuzzyScore(cmd, q) : 1;
+      if (score < 0) continue;
+      scored.push({ cmd, score, recency: i });
+    }
+    scored.sort((a, b) => b.score - a.score || b.recency - a.recency);
+    return scored.slice(0, 50);
+  })();
+
   const applyCompletion = (originalInput, candidate) => {
     // The candidate's `value` already contains the path prefix
     // (e.g. "src/Notebo..." not just "Notebo..."). Replace the trailing
@@ -380,6 +415,11 @@ function App() {
 
   const handleCommand = (e) => {
     const isMultiline = inputValue.includes('\n');
+    if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+      e.preventDefault();
+      setHistorySearch({ query: '', selectedIdx: 0 });
+      return;
+    }
     if (e.key === 'Tab' && !e.shiftKey) {
       e.preventDefault();
       if (completionState && completionState.candidates.length > 1) {
@@ -520,7 +560,9 @@ function App() {
               <div className="empty-state-tips">
                 <div className="tip"><kbd>Enter</kbd> run command</div>
                 <div className="tip"><kbd>Shift</kbd>+<kbd>Enter</kbd> new line</div>
+                <div className="tip"><kbd>Tab</kbd> complete paths</div>
                 <div className="tip"><kbd>↑</kbd> / <kbd>↓</kbd> history</div>
+                <div className="tip"><kbd>Ctrl</kbd>+<kbd>R</kbd> search history</div>
                 <div className="tip"><kbd>Esc</kbd> focus input</div>
               </div>
               <div className="empty-state-examples">
@@ -597,6 +639,60 @@ function App() {
         </div>
       </div>
       {activeTuiState && <TuiModal activeTerminal={getOrCreateTerminal(activeSessionId, activeTuiState.cellId)} requestResize={requestResizeFor(activeSessionId)} />}
+      {historySearch && (
+        <div className="history-search-overlay" onClick={() => setHistorySearch(null)}>
+          <div className="history-search-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="history-search-header">
+              <span className="history-search-prefix">(reverse-i-search)</span>
+              <input
+                type="text"
+                autoFocus
+                value={historySearch.query}
+                onChange={(e) => setHistorySearch({ query: e.target.value, selectedIdx: 0 })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') { setHistorySearch(null); refocusInput(); }
+                  else if (e.key === 'Enter') {
+                    const sel = historyMatches[historySearch.selectedIdx];
+                    if (sel) setInputValue(sel.cmd);
+                    setHistorySearch(null);
+                    setTimeout(() => refocusInput(), 0);
+                  } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setHistorySearch(s => ({ ...s, selectedIdx: Math.min(historyMatches.length - 1, s.selectedIdx + 1) }));
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setHistorySearch(s => ({ ...s, selectedIdx: Math.max(0, s.selectedIdx - 1) }));
+                  } else if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+                    e.preventDefault();
+                    setHistorySearch(s => ({ ...s, selectedIdx: Math.min(historyMatches.length - 1, s.selectedIdx + 1) }));
+                  }
+                }}
+                placeholder="type to fuzzy-search history…"
+              />
+              <span className="history-search-count">{historyMatches.length} match{historyMatches.length === 1 ? '' : 'es'}</span>
+            </div>
+            <div className="history-search-results">
+              {historyMatches.length === 0 && <div className="history-search-empty">No matches</div>}
+              {historyMatches.map((m, i) => (
+                <div
+                  key={`${m.cmd}-${i}`}
+                  className={`history-search-row${i === historySearch.selectedIdx ? ' active' : ''}`}
+                  onClick={() => { setInputValue(m.cmd); setHistorySearch(null); setTimeout(() => refocusInput(), 0); }}
+                  onMouseEnter={() => setHistorySearch(s => ({ ...s, selectedIdx: i }))}
+                >
+                  {m.cmd}
+                </div>
+              ))}
+            </div>
+            <div className="history-search-footer">
+              <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+              <span><kbd>Enter</kbd> use</span>
+              <span><kbd>Esc</kbd> cancel</span>
+              <span><kbd>Ctrl+R</kbd> next</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

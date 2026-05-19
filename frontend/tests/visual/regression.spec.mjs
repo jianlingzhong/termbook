@@ -280,4 +280,54 @@ test.describe('regression', () => {
         expect(val.startsWith('ec')).toBe(true);
         expect(val.length).toBeGreaterThan(2);
     });
+
+    // Ctrl+R opens a fuzzy history search overlay. Typing filters
+    // history matches, Enter inserts the selected command into the input.
+    test('Ctrl+R fuzzy history search inserts selected command', async ({ page }) => {
+        await gotoFreshSession(page);
+        const inp = await waitInputReady(page);
+        // Build distinct history entries.
+        for (const cmd of ['echo aaa', 'echo bbb', 'pwd', 'ls -al', 'echo HIST_TARGET_xyz']) {
+            await inp.fill(cmd);
+            await inp.press('Enter');
+            await page.waitForTimeout(900);
+        }
+        await inp.focus();
+        await page.keyboard.press('Control+r');
+        await page.waitForTimeout(400);
+
+        const overlay = await page.locator('.history-search-overlay').count();
+        expect(overlay).toBe(1);
+
+        // Fuzzy-search for 'xyz' (only HIST_TARGET_xyz contains it).
+        const searchInp = page.locator('.history-search-modal input');
+        await searchInp.fill('xyz');
+        await page.waitForTimeout(300);
+        const rows = await page.locator('.history-search-row').count();
+        expect(rows).toBeGreaterThan(0);
+
+        // Press Enter to use selected.
+        await searchInp.press('Enter');
+        await page.waitForTimeout(300);
+
+        const overlayAfter = await page.locator('.history-search-overlay').count();
+        expect(overlayAfter).toBe(0);
+        const val = await inp.inputValue();
+        expect(val).toContain('HIST_TARGET_xyz');
+    });
+
+    test('Ctrl+R can be dismissed with Escape', async ({ page }) => {
+        await gotoFreshSession(page);
+        const inp = await waitInputReady(page);
+        await inp.fill('echo something');
+        await inp.press('Enter');
+        await page.waitForTimeout(900);
+        await inp.focus();
+        await page.keyboard.press('Control+r');
+        await page.waitForTimeout(300);
+        expect(await page.locator('.history-search-overlay').count()).toBe(1);
+        await page.locator('.history-search-modal input').press('Escape');
+        await page.waitForTimeout(300);
+        expect(await page.locator('.history-search-overlay').count()).toBe(0);
+    });
 });

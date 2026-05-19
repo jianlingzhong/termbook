@@ -21,6 +21,8 @@ Self-hosted, localhost-only. Open-source.
   commands in real time.
 - Tab completion: file/dir paths and `$PATH` executables, with cycle-through
   for multiple candidates (Tab again to cycle).
+- Ctrl+R fuzzy history search overlay — type to filter, Enter to use,
+  Esc to cancel.
 
 ## What it isn't
 
