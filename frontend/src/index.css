@@ -95,7 +95,7 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
 .live-terminal .xterm-rows { width: 100% !important; }
 .live-terminal .xterm-viewport { height: auto !important; overflow: hidden !important; width: 100% !important; }
 .live-terminal .xterm-screen { width: 100% !important; }
-.chat-input-container { position: absolute; bottom: 0; left: 0; right: 0; padding: 40px; background: linear-gradient(0deg, var(--bg-obsidian) 70%, transparent); display: flex; justify-content: center; pointer-events: none; z-index: 200; }
+.chat-input-container { position: absolute; bottom: 0; left: 0; right: 0; padding: 40px; background: linear-gradient(0deg, var(--bg-obsidian) 70%, transparent); display: flex; flex-direction: column; align-items: center; justify-content: flex-end; pointer-events: none; z-index: 200; }
 .jump-to-bottom { position: absolute; left: 50%; bottom: 130px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 6px; background: var(--bg-panel); border: 1px solid var(--border-active); color: var(--accent-cyan); padding: 8px 16px; border-radius: 99px; font-size: 12px; font-weight: 600; cursor: pointer; z-index: 250; box-shadow: 0 8px 24px rgba(0,0,0,0.5); backdrop-filter: blur(20px); transition: transform 0.15s, opacity 0.15s; }
 .jump-to-bottom:hover { transform: translateX(-50%) translateY(-2px); }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 24px; gap: 20px; text-align: center; color: var(--text-secondary); }
@@ -123,6 +123,13 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
 .pwd-prompt-prefix { font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--accent-cyan); font-weight: 600; white-space: nowrap; flex-shrink: 0; }
 .chat-input-wrapper textarea { flex: 1; background: transparent; border: none; color: var(--text-primary); font-family: "JetBrains Mono", monospace; outline: none; z-index: 5; position: relative; min-width: 0; font-size: 14px; line-height: 24px; padding: 0; word-break: break-all; overflow-wrap: anywhere; white-space: pre-wrap; }
 .ghost-suggestion-text { position: absolute; left: 0; padding-left: 142px; width: 100%; color: #374151; font-family: "JetBrains Mono", monospace; font-size: 14px; pointer-events: none; z-index: 1; white-space: pre; opacity: 0.8; margin-top: 1px; }
+.completion-hint { pointer-events: auto; width: calc(100% - 80px); margin-bottom: 8px; padding: 8px 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; background: rgba(18, 20, 28, 0.92); border: 1px solid var(--border-light); border-radius: 10px; backdrop-filter: blur(20px); font-family: "JetBrains Mono", monospace; font-size: 11px; max-height: 80px; overflow-y: auto; }
+.completion-hint-count { color: var(--accent-cyan); font-weight: 700; padding: 2px 8px; background: rgba(0, 236, 236, 0.08); border-radius: 99px; font-size: 10px; flex-shrink: 0; }
+.completion-hint-chip { color: var(--text-secondary); padding: 2px 8px; border-radius: 4px; transition: all 0.1s; white-space: nowrap; }
+.completion-hint-chip.active { color: var(--accent-cyan); background: rgba(0, 236, 236, 0.1); font-weight: 600; }
+.completion-hint-more { color: var(--text-muted); font-style: italic; }
+.completion-hint-kbd { margin-left: auto; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.completion-hint-kbd kbd { font-family: "JetBrains Mono", monospace; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 1px 5px; font-size: 10px; color: var(--text-primary); }
 .tui-modal-overlay { 
   position: fixed; 
   inset: 0; 

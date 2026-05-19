@@ -14,10 +14,13 @@ Self-hosted, localhost-only. Open-source.
   its output, exit code, duration, and a colored status icon.
 - TUIs (vim, top, opencode, gemini-cli) open in a full-screen modal that
   resizes the underlying PTY to fill the modal.
-- Sessions survive page reloads — close the tab, come back, your shell is
-  still alive with all its environment.
+- Sessions survive page reloads AND backend restarts — finished cells are
+  persisted to SQLite (`termbook.db`); on restart the history reloads and
+  a fresh PTY is spawned lazily on next interaction.
 - Multiple browser tabs can share the same session and see each other's
   commands in real time.
+- Tab completion: file/dir paths and `$PATH` executables, with cycle-through
+  for multiple candidates (Tab again to cycle).
 
 ## What it isn't
 
