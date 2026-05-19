@@ -19,6 +19,27 @@ function shortenPath(p) {
   return [segs[0], '…', ...segs.slice(-2)].join('/');
 }
 
+const NOTIFY_THRESHOLD_MS = 5000;
+
+function maybeNotifyCommandFinished(command, durationMs, exitCode) {
+  if (typeof Notification === 'undefined') return;
+  if (durationMs == null || durationMs < NOTIFY_THRESHOLD_MS) return;
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus()) return;
+  const fire = () => {
+    try {
+      const ok = exitCode === 0 || exitCode == null;
+      const title = ok ? 'Termbook: command finished' : `Termbook: command failed (exit ${exitCode})`;
+      const body = (command || '').slice(0, 200);
+      new Notification(title, { body, tag: 'termbook-cmd', silent: false });
+    } catch {}
+  };
+  if (Notification.permission === 'granted') {
+    fire();
+  } else if (Notification.permission !== 'denied') {
+    Notification.requestPermission().then(p => { if (p === 'granted') fire(); }).catch(() => {});
+  }
+}
+
 function App() {
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
@@ -336,7 +357,12 @@ function App() {
                 termData.terminal.write(msg.data);
             } else if (msg.type === 'exit') {
                 const { cellId, pwd, snapshotAnsi, snapshotCols, snapshotRows, exitCode, usedTui, gitBranch, virtualEnv, condaEnv } = msg;
-                setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshotAnsi, snapshotCols, snapshotRows, exitCode, finishedAt: Date.now(), usedTui, gitBranch, virtualEnv, condaEnv } : c) }));
+                const now = Date.now();
+                // Find startedAt to compute duration for notifications.
+                const cell = (sessionCellsRef.current[sessionId] || []).find(c => c.id === cellId);
+                const duration = cell && cell.startedAt ? now - cell.startedAt : null;
+                maybeNotifyCommandFinished(cell?.command || '', duration, exitCode);
+                setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshotAnsi, snapshotCols, snapshotRows, exitCode, finishedAt: now, usedTui, gitBranch, virtualEnv, condaEnv } : c) }));
                 setSessionRunning(prev => ({ ...prev, [sessionId]: false }));
                 if (pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: pwd }));
                 const termData = sessionTerminals.current[`${sessionId}-${cellId}`];
