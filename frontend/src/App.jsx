@@ -49,6 +49,9 @@ function App() {
   const [draftBeforeHistory, setDraftBeforeHistory] = useState('');
   const [completionState, setCompletionState] = useState(null);
   const [historySearch, setHistorySearch] = useState(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState('');
+  const [paletteIdx, setPaletteIdx] = useState(0);
   const pushHistory = (cmd) => {
     setHistory(prev => {
       const next = (prev[prev.length - 1] === cmd ? prev : [...prev, cmd]).slice(-500);
@@ -84,6 +87,10 @@ function App() {
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setPaletteOpen(true);
+        setPaletteQuery('');
+        setPaletteIdx(0);
         return;
       }
       if (!inTextField && isInputUsable && inputRef.current && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.length === 1) {
@@ -359,6 +366,11 @@ function App() {
     if (!query) return 0;
     const t = text.toLowerCase();
     const q = query.toLowerCase();
+    if (t === q) return 10000;
+    if (t.startsWith(q)) return 5000 - t.length;
+    // Bonus when the query matches at a word boundary (after space/punct).
+    const wordRegex = new RegExp(`(?:^|[\\s_-])${q.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}`);
+    if (wordRegex.test(t)) return 2000 - t.indexOf(q);
     if (t.includes(q)) return 1000 - t.indexOf(q);
     let ti = 0, score = 0, lastMatch = -1;
     for (const qc of q) {
@@ -444,6 +456,13 @@ function App() {
       return;
     }
     if (e.key !== 'Tab' && completionState) setCompletionState(null);
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      setPaletteOpen(true);
+      setPaletteQuery('');
+      setPaletteIdx(0);
+      return;
+    }
     if (e.key === 'ArrowUp' && !e.shiftKey && !isMultiline) {
       if (history.length === 0) return;
       e.preventDefault();
@@ -500,6 +519,85 @@ function App() {
   };
 
   const activeTuiState = sessionTuiStates[activeSessionId];
+
+  const lastCommand = (() => {
+    const cells = sessionCells[activeSessionId] || [];
+    for (let i = cells.length - 1; i >= 0; i--) {
+      if (cells[i].command) return cells[i].command;
+    }
+    return null;
+  })();
+
+  const closePalette = () => { setPaletteOpen(false); setPaletteQuery(''); setPaletteIdx(0); setTimeout(() => refocusInput(), 0); };
+  const paletteActions = [
+    {
+      id: 'new-session',
+      label: 'New session',
+      hint: 'Cmd+N',
+      run: () => { createNewSession(); },
+    },
+    {
+      id: 'history-search',
+      label: 'Search command history',
+      hint: 'Ctrl+R',
+      run: () => { setHistorySearch({ query: '', selectedIdx: 0 }); },
+    },
+    {
+      id: 'clear-output',
+      label: 'Clear terminal output',
+      hint: 'Cmd+L',
+      run: () => {
+        const ws = sessionSockets[activeSessionId];
+        if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'input', data: 'clear\r' }));
+      },
+    },
+    lastCommand && {
+      id: 'rerun-last',
+      label: `Re-run last command: ${lastCommand}`,
+      hint: '',
+      run: () => { setInputValue(lastCommand); },
+    },
+    activeSessionId && {
+      id: 'delete-session',
+      label: `Delete current session`,
+      hint: '',
+      run: () => { deleteSession(activeSessionId); },
+    },
+    sessions.length > 1 && {
+      id: 'switch-session',
+      label: `Switch session (${sessions.length} available)`,
+      hint: '',
+      run: () => {
+        const idx = sessions.findIndex(s => s.id === activeSessionId);
+        const next = sessions[(idx + 1) % sessions.length];
+        if (next) switchSession(next.id);
+      },
+    },
+    {
+      id: 'copy-last-output',
+      label: 'Copy last cell output',
+      hint: '',
+      run: async () => {
+        const cells = sessionCells[activeSessionId] || [];
+        for (let i = cells.length - 1; i >= 0; i--) {
+          const node = document.querySelector(`[data-cell-id="${cells[i].id}"] .cell-output`);
+          if (node) {
+            try { await navigator.clipboard.writeText(node.innerText.trim()); } catch {}
+            break;
+          }
+        }
+      },
+    },
+  ].filter(Boolean);
+
+  const paletteFilteredActions = (() => {
+    if (!paletteQuery) return paletteActions;
+    const scored = paletteActions
+      .map(a => ({ a, score: fuzzyScore(a.label + ' ' + (a.hint || ''), paletteQuery) }))
+      .filter(x => x.score > 0)
+      .sort((x, y) => y.score - x.score);
+    return scored.map(x => x.a);
+  })();
 
   return (
     <div className="app-container">
@@ -563,6 +661,7 @@ function App() {
                 <div className="tip"><kbd>Tab</kbd> complete paths</div>
                 <div className="tip"><kbd>↑</kbd> / <kbd>↓</kbd> history</div>
                 <div className="tip"><kbd>Ctrl</kbd>+<kbd>R</kbd> search history</div>
+                <div className="tip"><kbd>⌘</kbd>+<kbd>K</kbd> action palette</div>
                 <div className="tip"><kbd>Esc</kbd> focus input</div>
               </div>
               <div className="empty-state-examples">
@@ -692,6 +791,55 @@ function App() {
               <span><kbd>Enter</kbd> use</span>
               <span><kbd>Esc</kbd> cancel</span>
               <span><kbd>Ctrl+R</kbd> next</span>
+            </div>
+          </div>
+        </div>
+      )}
+      {paletteOpen && (
+        <div className="history-search-overlay" onClick={closePalette}>
+          <div className="history-search-modal palette-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="history-search-header">
+              <span className="palette-prefix">⌘K</span>
+              <input
+                type="text"
+                autoFocus
+                value={paletteQuery}
+                onChange={(e) => { setPaletteQuery(e.target.value); setPaletteIdx(0); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') { closePalette(); }
+                  else if (e.key === 'Enter') {
+                    const sel = paletteFilteredActions[paletteIdx];
+                    if (sel) { sel.run(); closePalette(); }
+                  } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setPaletteIdx(i => Math.min(paletteFilteredActions.length - 1, i + 1));
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setPaletteIdx(i => Math.max(0, i - 1));
+                  }
+                }}
+                placeholder="type an action…"
+              />
+              <span className="history-search-count">{paletteFilteredActions.length} action{paletteFilteredActions.length === 1 ? '' : 's'}</span>
+            </div>
+            <div className="history-search-results">
+              {paletteFilteredActions.length === 0 && <div className="history-search-empty">No matching actions</div>}
+              {paletteFilteredActions.map((a, i) => (
+                <div
+                  key={a.id}
+                  className={`history-search-row palette-row${i === paletteIdx ? ' active' : ''}`}
+                  onClick={() => { a.run(); closePalette(); }}
+                  onMouseEnter={() => setPaletteIdx(i)}
+                >
+                  <span className="palette-row-label">{a.label}</span>
+                  {a.hint && <span className="palette-row-hint">{a.hint}</span>}
+                </div>
+              ))}
+            </div>
+            <div className="history-search-footer">
+              <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+              <span><kbd>Enter</kbd> run</span>
+              <span><kbd>Esc</kbd> cancel</span>
             </div>
           </div>
         </div>
