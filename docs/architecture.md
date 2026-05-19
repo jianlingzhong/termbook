@@ -226,15 +226,38 @@ If any of these is wrong, the user sees stale formatting. See
 
 ## Persistence
 
-Sessions are kept in a `Map<sessionId, session>` in memory only. On server
-restart, every session is lost — the PTY processes die with the parent.
-The frontend's localStorage holds command history (last 500), but nothing
-else. There is no database.
+Sessions and finished cells are persisted to a SQLite database
+(`termbook.db` at the repo root, override via `TERMBOOK_DB_PATH=`).
+Schema in `backend/persistence.js`:
 
-`GET /api/sessions` lists live sessions for the sidebar.
+- `sessions(id, pwd, created_at, last_activity)`
+- `cells(id, session_id, command, snapshot_ansi, snapshot_cols, snapshot_rows, exit_code, pwd, executable_pwd, used_tui, started_at, finished_at, position)`
+
+On backend startup, all sessions and their cells are loaded into the
+in-memory `sessions` Map, with `ptyProcess: null`. A new PTY is spawned
+lazily on the first `join_session` for a hydrated session (see
+`spawnPtyForSession()` in `server.js`). The PTY starts in the session's
+last known `pwd` so the user lands where they left off.
+
+Writes happen at:
+- session create (`createSession()`)
+- pwd change (in the cell-finish path of `attachPtyHandlers()`)
+- cell create (`startCommand()`)
+- cell close (`exitHandler` inside `attachPtyHandlers()`)
+- session destroy (`destroySession()` cascades to `cells`)
+
+**What's NOT persisted**: in-flight commands (their cells are marked
+non-running on hydration), live PTY state (env vars set via `export`,
+shell functions, subprocess state), and the raw command history (kept
+in the frontend's localStorage instead, last 500).
+
+Reset the DB by deleting `termbook.db*` or running
+`node backend/server.js --reset-db`.
+
+`GET /api/sessions` lists hydrated+live sessions for the sidebar.
 `GET /api/sessions/:id` returns a single session with its cells (used on
 page reload to hydrate). `DELETE /api/sessions/:id` destroys a session
-(used by the sidebar × button).
+in memory AND removes it from the DB.
 
 ## Telemetry
 
