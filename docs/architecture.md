@@ -259,6 +259,35 @@ Reset the DB by deleting `termbook.db*` or running
 page reload to hydrate). `DELETE /api/sessions/:id` destroys a session
 in memory AND removes it from the DB.
 
+## Tab completion
+
+`backend/completion.js` exposes a stateless `complete(input, cwd, aliases)`
+function that returns a list of candidates. The frontend calls
+`GET /api/complete?input=...&sessionId=...` on Tab keypress.
+
+Two modes, chosen by token position:
+
+- **First token** (no whitespace yet typed): unioned set of bash
+  builtins + user aliases + executables on `$PATH`, filtered by prefix.
+  `$PATH` is scanned once and cached for 30s (`PATH_CACHE_MS`).
+
+- **Later tokens** (or current token contains `/`): filesystem listing
+  of `dirname(token)` inside the session's `pwd`, with `~`-expansion.
+  Directories are sorted first and suffixed with `/`. Hidden files are
+  shown only when the token starts with `.`.
+
+The frontend (`App.jsx`) on Tab:
+
+1. If we already have a multi-candidate state, advance to the next
+   candidate (cycle).
+2. Otherwise call `/api/complete`. If 1 candidate, accept (append space
+   if it's a file). If many, replace input with the first and store the
+   list in `completionState`; the next Tab cycles.
+3. Any non-Tab keypress clears `completionState`.
+
+The hint UI (`.completion-hint`) shows up to 8 candidates inline above
+the input with the active one highlighted and "Tab to cycle" affordance.
+
 ## Telemetry
 
 `debugLog()` in `server.js` appends to `ssr_debug.log` (in the project
