@@ -12,6 +12,7 @@ const { Terminal } = require('@xterm/headless');
 const { SerializeAddon } = require('@xterm/addon-serialize');
 const { parseOutput } = require('./parser');
 const persistence = require('./persistence');
+const completion = require('./completion');
 
 const configPath = path.join(__dirname, '..', 'app_config.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -517,6 +518,24 @@ app.get('/api/sessions/:id', (req, res) => {
 app.delete('/api/sessions/:id', (req, res) => {
   if (destroySession(req.params.id, 'user_request')) res.json({ ok: true });
   else res.status(404).json({ error: 'Not found' });
+});
+
+app.get('/api/complete', (req, res) => {
+    const input = String(req.query.input || '');
+    const sessionId = String(req.query.sessionId || '');
+    const s = sessions.get(sessionId);
+    const cwd = (s && s.pwd) || process.cwd();
+    try {
+        const result = completion.complete(input, cwd, USER_ALIASES);
+        res.json({
+            input,
+            cwd,
+            currentToken: result.currentToken,
+            candidates: result.candidates,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 const PORT = process.env.PORT || 4001;

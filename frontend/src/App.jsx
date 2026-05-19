@@ -47,6 +47,7 @@ function App() {
   });
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [draftBeforeHistory, setDraftBeforeHistory] = useState('');
+  const [completionState, setCompletionState] = useState(null);
   const pushHistory = (cmd) => {
     setHistory(prev => {
       const next = (prev[prev.length - 1] === cmd ? prev : [...prev, cmd]).slice(-500);
@@ -353,8 +354,56 @@ function App() {
     };
   }, [activeSessionId]);
 
+  const applyCompletion = (originalInput, candidate) => {
+    // The candidate's `value` already contains the path prefix
+    // (e.g. "src/Notebo..." not just "Notebo..."). Replace the trailing
+    // current-token portion with candidate.value, preserving everything
+    // before. Tokenize the same way the backend does.
+    const trailing = originalInput.match(/(\S*)$/)?.[1] || '';
+    const prefix = originalInput.slice(0, originalInput.length - trailing.length);
+    return prefix + candidate.value;
+  };
+
+  const requestCompletion = async () => {
+    if (!activeSessionId) return null;
+    const apiBase = window.location.origin.replace(':4000', ':4001');
+    try {
+      const url = `${apiBase}/api/complete?input=${encodeURIComponent(inputValue)}&sessionId=${encodeURIComponent(activeSessionId)}`;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data;
+    } catch {
+      return null;
+    }
+  };
+
   const handleCommand = (e) => {
     const isMultiline = inputValue.includes('\n');
+    if (e.key === 'Tab' && !e.shiftKey) {
+      e.preventDefault();
+      if (completionState && completionState.candidates.length > 1) {
+        const nextIdx = (completionState.idx + 1) % completionState.candidates.length;
+        const nextCand = completionState.candidates[nextIdx];
+        setInputValue(applyCompletion(completionState.originalInput, nextCand));
+        setCompletionState({ ...completionState, idx: nextIdx });
+        return;
+      }
+      requestCompletion().then(data => {
+        if (!data || !data.candidates || data.candidates.length === 0) return;
+        if (data.candidates.length === 1) {
+          let next = applyCompletion(inputValue, data.candidates[0]);
+          if (!data.candidates[0].isDir) next += ' ';
+          setInputValue(next);
+          setCompletionState(null);
+        } else {
+          setInputValue(applyCompletion(inputValue, data.candidates[0]));
+          setCompletionState({ candidates: data.candidates, idx: 0, originalInput: inputValue });
+        }
+      });
+      return;
+    }
+    if (e.key !== 'Tab' && completionState) setCompletionState(null);
     if (e.key === 'ArrowUp' && !e.shiftKey && !isMultiline) {
       if (history.length === 0) return;
       e.preventDefault();
@@ -510,6 +559,18 @@ function App() {
           </button>
         )}
         <div className="chat-input-container">
+          {completionState && completionState.candidates.length > 1 && (
+            <div className="completion-hint">
+              <span className="completion-hint-count">{completionState.idx + 1}/{completionState.candidates.length}</span>
+              {completionState.candidates.slice(0, 8).map((c, i) => (
+                <span key={c.value} className={`completion-hint-chip${i === completionState.idx ? ' active' : ''}`}>{c.display}</span>
+              ))}
+              {completionState.candidates.length > 8 && (
+                <span className="completion-hint-more">+{completionState.candidates.length - 8} more</span>
+              )}
+              <span className="completion-hint-kbd"><kbd>Tab</kbd> to cycle</span>
+            </div>
+          )}
           <div className={`chat-input-wrapper${sessionRunning[activeSessionId] ? ' is-running' : ''}${activeTuiState ? ' is-tui' : ''}`}>
             <span className="pwd-prompt-prefix">
               {sessionRunning[activeSessionId] ? <span className="running-spinner" aria-hidden="true" /> : <span>termbook ❯</span>}
