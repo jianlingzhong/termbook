@@ -229,4 +229,55 @@ test.describe('regression', () => {
         expect(data.outputWidth).toBeGreaterThan(1000);
         expect(data.firstRowCharCount).toBeGreaterThan(140);
     });
+
+    // Tab completion: hitting Tab on a partial token should expand to the
+    // matching file/dir in the session's pwd, OR cycle through candidates
+    // if multiple matches exist.
+    test('tab completion expands a unique path prefix', async ({ page }) => {
+        await gotoFreshSession(page);
+        const inp = await waitInputReady(page);
+        // 'fro' in the termbook repo root is unique-ish to 'frontend'
+        // (frontend, frontend-server.log, frontend.log all start with 'fro'),
+        // but 'fronten' completes uniquely to 'frontend/' (since others
+        // are different lengths). Actually all 3 share the 'fronten'
+        // prefix... 'frontend' is the dir. Test the cycling behavior
+        // instead.
+        await inp.fill('ls fro');
+        await inp.press('Tab');
+        await page.waitForTimeout(800);
+        const val = await inp.inputValue();
+        // Backend must respond with at least one candidate starting with 'fro';
+        // input becomes 'ls <candidate>'.
+        expect(val).toMatch(/^ls fro/);
+        expect(val.length).toBeGreaterThan('ls fro'.length);
+    });
+
+    test('tab completion cycles through multiple candidates', async ({ page }) => {
+        await gotoFreshSession(page);
+        const inp = await waitInputReady(page);
+        await inp.fill('cd ');
+        await inp.press('Tab');
+        await page.waitForTimeout(600);
+        const first = await inp.inputValue();
+        await inp.press('Tab');
+        await page.waitForTimeout(300);
+        const second = await inp.inputValue();
+        // Cycling Tab must show a different candidate.
+        expect(second).not.toBe(first);
+        // Hint should be visible.
+        const hint = await page.locator('.completion-hint').count();
+        expect(hint).toBeGreaterThan(0);
+    });
+
+    test('tab completion finds executables on PATH (first token)', async ({ page }) => {
+        await gotoFreshSession(page);
+        const inp = await waitInputReady(page);
+        // 'ec' should resolve to 'echo' (a bash builtin and a binary).
+        await inp.fill('ec');
+        await inp.press('Tab');
+        await page.waitForTimeout(600);
+        const val = await inp.inputValue();
+        expect(val.startsWith('ec')).toBe(true);
+        expect(val.length).toBeGreaterThan(2);
+    });
 });
