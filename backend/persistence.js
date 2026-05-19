@@ -35,13 +35,20 @@ function openDb(dbPath = process.env.TERMBOOK_DB_PATH || DEFAULT_DB_PATH) {
         );
         CREATE INDEX IF NOT EXISTS idx_cells_session_position ON cells(session_id, position);
     `);
+    // Lightweight migrations: add columns if missing. SQLite ALTER TABLE
+    // ADD COLUMN is cheap and idempotent (after a check).
+    const cellCols = new Set(db.prepare(`PRAGMA table_info(cells)`).all().map(c => c.name));
+    if (!cellCols.has('git_branch')) db.exec(`ALTER TABLE cells ADD COLUMN git_branch TEXT`);
+    if (!cellCols.has('virtual_env')) db.exec(`ALTER TABLE cells ADD COLUMN virtual_env TEXT`);
+    if (!cellCols.has('conda_env')) db.exec(`ALTER TABLE cells ADD COLUMN conda_env TEXT`);
     return db;
 }
 
 function loadAllSessions(db) {
     const sessRows = db.prepare(`SELECT id, pwd, created_at, last_activity FROM sessions ORDER BY last_activity DESC`).all();
     const cellStmt = db.prepare(`
-        SELECT id, command, snapshot_ansi, snapshot_cols, snapshot_rows, exit_code, pwd, executable_pwd, used_tui, started_at, finished_at
+        SELECT id, command, snapshot_ansi, snapshot_cols, snapshot_rows, exit_code, pwd, executable_pwd,
+               used_tui, started_at, finished_at, git_branch, virtual_env, conda_env
         FROM cells WHERE session_id = ? ORDER BY position ASC
     `);
     return sessRows.map(s => ({
@@ -61,6 +68,9 @@ function loadAllSessions(db) {
             usedTui: !!c.used_tui,
             startedAt: c.started_at,
             finishedAt: c.finished_at,
+            gitBranch: c.git_branch || null,
+            virtualEnv: c.virtual_env || null,
+            condaEnv: c.conda_env || null,
             isRunning: false,
             output: '',
         })),
@@ -84,9 +94,11 @@ function upsertSession(db, sess) {
 
 const upsertCellSql = `
     INSERT INTO cells (id, session_id, command, snapshot_ansi, snapshot_cols, snapshot_rows,
-                       exit_code, pwd, executable_pwd, used_tui, started_at, finished_at, position)
+                       exit_code, pwd, executable_pwd, used_tui, started_at, finished_at, position,
+                       git_branch, virtual_env, conda_env)
     VALUES (@id, @sessionId, @command, @snapshotAnsi, @snapshotCols, @snapshotRows,
-            @exitCode, @pwd, @executablePwd, @usedTui, @startedAt, @finishedAt, @position)
+            @exitCode, @pwd, @executablePwd, @usedTui, @startedAt, @finishedAt, @position,
+            @gitBranch, @virtualEnv, @condaEnv)
     ON CONFLICT(id) DO UPDATE SET
         snapshot_ansi=excluded.snapshot_ansi,
         snapshot_cols=excluded.snapshot_cols,
@@ -95,7 +107,10 @@ const upsertCellSql = `
         pwd=excluded.pwd,
         executable_pwd=excluded.executable_pwd,
         used_tui=excluded.used_tui,
-        finished_at=excluded.finished_at
+        finished_at=excluded.finished_at,
+        git_branch=excluded.git_branch,
+        virtual_env=excluded.virtual_env,
+        conda_env=excluded.conda_env
 `;
 
 function upsertCell(db, sessionId, cell, position) {
@@ -113,6 +128,9 @@ function upsertCell(db, sessionId, cell, position) {
         startedAt: cell.startedAt || null,
         finishedAt: cell.finishedAt || null,
         position,
+        gitBranch: cell.gitBranch || null,
+        virtualEnv: cell.virtualEnv || null,
+        condaEnv: cell.condaEnv || null,
     });
 }
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Folder, Copy, RotateCcw, Check, AlertTriangle } from 'lucide-react';
+import { Folder, Copy, RotateCcw, Check, AlertTriangle, GitBranch, Package } from 'lucide-react';
 import { Terminal } from 'xterm';
 import { SerializeAddon } from '@xterm/addon-serialize';
 
@@ -61,7 +61,7 @@ function trimSnapshotRows(html) {
     return result;
 }
 
-export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotRows, activeTerminal, initialCommand, executablePwd, isRunning, isTuiActive, requestResize, exitCode, startedAt, finishedAt, usedTui, onRerun }) {
+export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotRows, activeTerminal, initialCommand, executablePwd, isRunning, isTuiActive, requestResize, exitCode, startedAt, finishedAt, usedTui, gitBranch, virtualEnv, condaEnv, onRerun }) {
   const terminalRef = useRef(null);
   const [isTerminalAttached, setIsTerminalAttached] = useState(false);
   const [renderedSnapshot, setRenderedSnapshot] = useState(null);
@@ -232,6 +232,24 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
                     </button>
                   )}
                 </>
+            )}
+            {gitBranch && (
+                <div className="cell-env-chip cell-env-chip-git" title={`git: ${gitBranch}`}>
+                    <GitBranch size={11} />
+                    <span>{gitBranch}</span>
+                </div>
+            )}
+            {virtualEnv && (
+                <div className="cell-env-chip cell-env-chip-venv" title={`venv: ${virtualEnv}`}>
+                    <Package size={11} />
+                    <span>{virtualEnv}</span>
+                </div>
+            )}
+            {condaEnv && (
+                <div className="cell-env-chip cell-env-chip-conda" title={`conda: ${condaEnv}`}>
+                    <Package size={11} />
+                    <span>{condaEnv}</span>
+                </div>
             )}
             {executablePwd && (
                 <div className="cell-header-breadcrumb" title={executablePwd}>

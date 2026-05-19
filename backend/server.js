@@ -13,6 +13,7 @@ const { SerializeAddon } = require('@xterm/addon-serialize');
 const { parseOutput } = require('./parser');
 const persistence = require('./persistence');
 const completion = require('./completion');
+const envDetect = require('./env_detect');
 
 const configPath = path.join(__dirname, '..', 'app_config.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -181,15 +182,32 @@ debugLog(`[ALIASES] imported ${USER_ALIASES.length} from user rc files`);
 
 
 function buildBashRc(promptSalt, projectRoot) {
+  // The OSC 1338 TBENV marker lets the backend pick up shell-side env vars
+  // (VIRTUAL_ENV, CONDA_DEFAULT_ENV) that the parent process can't see.
+  // Each PROMPT_COMMAND tick emits venv=<basename> and conda=<name>; keys
+  // are omitted when empty. We use bash parameter expansion (${var##*/})
+  // instead of $(basename ...) because escaping inner quotes inside the
+  // single-quoted PROMPT_COMMAND is fragile and produced trailing-quote
+  // artifacts. Git branch is detected backend-side from pwd.
+  const tbenvSnippet = '__tb_venv="${VIRTUAL_ENV:+venv=${VIRTUAL_ENV##*/}}"; __tb_conda="${CONDA_DEFAULT_ENV:+conda=$CONDA_DEFAULT_ENV}"; __tb_env="$__tb_venv${__tb_venv:+${__tb_conda:+;}}$__tb_conda"; printf "\\033]1338;TBENV;%s\\007" "$__tb_env"';
   return [
     `cd ${JSON.stringify(projectRoot)}`,
     `export PS1=' '`,
     `export PS2=' '`,
-    `export PROMPT_COMMAND='printf "\\033]133;D;%s;%s\\007\\033]7;file://localhost%s\\007" "$?" "${promptSalt}" "$PWD"'`,
+    // Emit OSC 1338 (env) BEFORE OSC 133;D (finish marker) so the env
+    // marker is guaranteed to be in tailBuf when parseOutput sees the
+    // 133;D marker. Otherwise the env marker arrives in a later chunk
+    // and gets discarded with the rest of the tailBuf after cell close.
+    `export PROMPT_COMMAND='__tbexit=$?; ${tbenvSnippet}; printf "\\033]133;D;%s;%s\\007\\033]7;file://localhost%s\\007" "$__tbexit" "${promptSalt}" "$PWD"'`,
     `export CLICOLOR=1`,
     `export CLICOLOR_FORCE=1`,
     `export LSCOLORS='ExGxFxdaCxDaDahbadeche'`,
     `export TERM=xterm-256color`,
+    // Tell python venv / conda not to mutate PS1. We display this info as
+    // chips on the cell instead. Without these, the prompt becomes
+    // "(venv) " and that prefix leaks into the next cell's output.
+    `export VIRTUAL_ENV_DISABLE_PROMPT=1`,
+    `export CONDA_CHANGEPS1=false`,
     `ls() { if /bin/ls --version >/dev/null 2>&1; then command ls --color=auto "$@"; else command ls -G "$@"; fi; }`,
     `alias grep='grep --color=auto'`,
     ...USER_ALIASES,
@@ -338,7 +356,7 @@ function attachPtyHandlers(session) {
 
       const finishMatch = parseOutput(session.tailBuf, session.promptSalt);
       if (session.activeCellId && finishMatch) {
-          debugLog(`[FINISH] exit=${finishMatch.exitCode} pwd=${JSON.stringify(finishMatch.pwd)}`);
+          debugLog(`[FINISH] exit=${finishMatch.exitCode} pwd=${JSON.stringify(finishMatch.pwd)} env=${JSON.stringify(finishMatch.env || {})}`);
       }
       if (session.activeCellId) {
         const cell = session.cells.find(c => c.id === session.activeCellId);
@@ -354,6 +372,10 @@ function attachPtyHandlers(session) {
             const currentPwd = finishMatch.pwd || session.pwd;
             if (finishMatch.pwd) { session.pwd = finishMatch.pwd; persistSession(session); }
             const currentExitCode = finishMatch.exitCode;
+            const shellEnv = finishMatch.env || {};
+            const gitBranch = envDetect.detectGitBranch(currentPwd);
+            const virtualEnv = shellEnv.venv || null;
+            const condaEnv = shellEnv.conda || null;
             const exitHandler = () => {
                 let snapshotAnsi = "";
                 let snapshotCols = 120;
@@ -373,9 +395,21 @@ function attachPtyHandlers(session) {
                     closedCell.pwd = currentPwd;
                     closedCell.usedTui = wasTui;
                     closedCell.finishedAt = Date.now();
+                    closedCell.gitBranch = gitBranch;
+                    closedCell.virtualEnv = virtualEnv;
+                    closedCell.condaEnv = condaEnv;
                     persistCell(session, closedCell);
                 }
-                for (const ws of session.clients) ws.send(JSON.stringify({ type: 'exit', exitCode: currentExitCode, cellId: currentCellId, pwd: currentPwd, snapshotAnsi: wasTui ? "" : snapshotAnsi, snapshotCols, snapshotRows, usedTui: wasTui }));
+                for (const ws of session.clients) ws.send(JSON.stringify({
+                    type: 'exit',
+                    exitCode: currentExitCode,
+                    cellId: currentCellId,
+                    pwd: currentPwd,
+                    snapshotAnsi: wasTui ? "" : snapshotAnsi,
+                    snapshotCols, snapshotRows,
+                    usedTui: wasTui,
+                    gitBranch, virtualEnv, condaEnv,
+                }));
                 if (session.pendingQueue.length > 0) {
                     const nextCmd = session.pendingQueue.shift();
                     startCommand(session, nextCmd.cellId, nextCmd.data);

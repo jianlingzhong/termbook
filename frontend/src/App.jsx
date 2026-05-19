@@ -328,8 +328,8 @@ function App() {
                 const termData = getOrCreateTerminal(sessionId, msg.cellId);
                 termData.terminal.write(msg.data);
             } else if (msg.type === 'exit') {
-                const { cellId, pwd, snapshotAnsi, snapshotCols, snapshotRows, exitCode, usedTui } = msg;
-                setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshotAnsi, snapshotCols, snapshotRows, exitCode, finishedAt: Date.now(), usedTui } : c) }));
+                const { cellId, pwd, snapshotAnsi, snapshotCols, snapshotRows, exitCode, usedTui, gitBranch, virtualEnv, condaEnv } = msg;
+                setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshotAnsi, snapshotCols, snapshotRows, exitCode, finishedAt: Date.now(), usedTui, gitBranch, virtualEnv, condaEnv } : c) }));
                 setSessionRunning(prev => ({ ...prev, [sessionId]: false }));
                 if (pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: pwd }));
                 const termData = sessionTerminals.current[`${sessionId}-${cellId}`];
@@ -590,6 +590,9 @@ function App() {
                 startedAt={c.startedAt}
                 finishedAt={c.finishedAt}
                 usedTui={c.usedTui}
+                gitBranch={c.gitBranch}
+                virtualEnv={c.virtualEnv}
+                condaEnv={c.condaEnv}
                 onRerun={(cmd) => { setInputValue(cmd); refocusInput(); }}
             />
           ))}
