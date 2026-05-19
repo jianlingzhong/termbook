@@ -86,6 +86,36 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.cell-env-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.cell-env-chip-git {
+  color: #c5a3ff;
+  background: rgba(139, 92, 246, 0.10);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+}
+.cell-env-chip-venv {
+  color: #fcd34d;
+  background: rgba(252, 211, 77, 0.08);
+  border: 1px solid rgba(252, 211, 77, 0.22);
+}
+.cell-env-chip-conda {
+  color: #6ee7b7;
+  background: rgba(110, 231, 183, 0.08);
+  border: 1px solid rgba(110, 231, 183, 0.22);
+}
 .prompt-arrow { color: var(--accent-cyan) !important; font-weight: 900; font-family: "JetBrains Mono", monospace; font-size: 16px; margin-right: 4px; }
 .read-only-command { font-family: "JetBrains Mono", monospace; color: #ffffff; font-size: 15px; font-weight: 600; word-break: break-all; white-space: pre-wrap; line-height: 1.6; }
 .cell-output { padding: 4px 16px; min-height: 24px; overflow: auto; display: block; background: #000000 !important; position: relative; width: 100%; box-sizing: border-box; transition: height 0.2s ease-out; }

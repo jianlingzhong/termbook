@@ -330,4 +330,57 @@ test.describe('regression', () => {
         await page.waitForTimeout(300);
         expect(await page.locator('.history-search-overlay').count()).toBe(0);
     });
+
+    // Cells must display the current git branch as a chip in the header.
+    // The repo this test runs in is itself a git repo, so any command run
+    // from the repo root should pick up the branch.
+    test('cells show git branch chip when inside a git repo', async ({ page }) => {
+        await gotoFreshSession(page);
+        await runCommand(page, 'pwd', 1500);
+        const chipCount = await page.locator('.notebook-cell .cell-env-chip-git').count();
+        expect(chipCount).toBeGreaterThan(0);
+        const chipText = await page.locator('.cell-env-chip-git').first().innerText();
+        // Any non-empty branch name is fine; usually "main" in this repo.
+        expect(chipText.trim().length).toBeGreaterThan(0);
+    });
+
+    // Activating a Python venv must surface the venv name as a chip on
+    // subsequent cells. Tests the OSC 1338 TBENV side-channel.
+    test('cells show venv chip after source activate', async ({ page }) => {
+        await gotoFreshSession(page);
+        const inp = await waitInputReady(page);
+        // Build a venv we control. Use python3 -m venv which is on most macs.
+        await runCommand(page, 'rm -rf /tmp/tb_test_venv && python3 -m venv /tmp/tb_test_venv', 5000);
+        await runCommand(page, 'source /tmp/tb_test_venv/bin/activate && echo VENVON', 1800);
+        await runCommand(page, 'echo afterwards', 1500);
+
+        // The third cell (echo afterwards) must have a venv chip.
+        const data = await page.evaluate(() => {
+            const cells = Array.from(document.querySelectorAll('.notebook-cell'));
+            return cells.map(c => ({
+                cmd: c.querySelector('.read-only-command')?.textContent,
+                venv: c.querySelector('.cell-env-chip-venv')?.textContent,
+            }));
+        });
+        const lastCell = data[data.length - 1];
+        expect(lastCell.cmd).toContain('afterwards');
+        expect(lastCell.venv || '').toContain('tb_test_venv');
+    });
+
+    // Activating a venv must NOT leak the "(venv) " prompt prefix into
+    // subsequent cell output. VIRTUAL_ENV_DISABLE_PROMPT=1 in our bashrc
+    // prevents the venv activate script from mutating PS1.
+    test('venv activation does not leak (venv) prompt into cell output', async ({ page }) => {
+        await gotoFreshSession(page);
+        await runCommand(page, 'rm -rf /tmp/tb_test_venv2 && python3 -m venv /tmp/tb_test_venv2', 5000);
+        await runCommand(page, 'source /tmp/tb_test_venv2/bin/activate && echo ON', 1800);
+        await runCommand(page, 'echo CLEAN_OUTPUT', 1500);
+
+        const lastBody = await page.evaluate(() => {
+            const cells = Array.from(document.querySelectorAll('.notebook-cell'));
+            return cells[cells.length - 1]?.querySelector('.cell-output')?.innerText || '';
+        });
+        expect(lastBody).toContain('CLEAN_OUTPUT');
+        expect(lastBody).not.toContain('(tb_test_venv2)');
+    });
 });
