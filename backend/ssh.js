@@ -123,33 +123,36 @@ function buildRemoteIntegration(salt) {
   //   (b) install prompt machinery (function definitions, PROMPT_COMMAND)
   //   (c) emit one immediate marker by calling the prompt fn manually so
   //       Termbook learns initial pwd/env without waiting for user's next cmd
-  const enc = (s) => s.replace(/'/g, `'\\''`); // single-quote escape (not used yet but reserved)
-  void enc;
-  const bashSnippet = [
+  // Statements need explicit `;` separators because we send this as a SINGLE
+  // line. The function body uses `;` internally too. Don't use newlines —
+  // the remote shell would interpret each as a separate command at the
+  // outer level after the function body closes, and the bootstrap text
+  // would echo back over many lines.
+  const lines = [
     `stty -echo 2>/dev/null`,
     `export PS1=' '`,
     `export PS2=' '`,
     `export VIRTUAL_ENV_DISABLE_PROMPT=1`,
     `export CONDA_CHANGEPS1=false`,
-    // Use a unique function name to avoid colliding with user's shell state.
-    `__tb_remote_prompt() {`,
-    `  local __tb_exit=$?;`,
-    `  local __tb_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null);`,
-    `  local __tb_venv="\${VIRTUAL_ENV:+venv=\${VIRTUAL_ENV##*/}}";`,
-    `  local __tb_conda="\${CONDA_DEFAULT_ENV:+conda=$CONDA_DEFAULT_ENV}";`,
-    `  local __tb_host=\${HOSTNAME:-$(hostname 2>/dev/null)};`,
-    `  local __tb_env_pairs="$__tb_venv\${__tb_venv:+\${__tb_conda:+;}}$__tb_conda";`,
-    `  __tb_env_pairs="\${__tb_env_pairs}\${__tb_env_pairs:+\${__tb_branch:+;}}\${__tb_branch:+branch=$__tb_branch}";`,
-    `  __tb_env_pairs="\${__tb_env_pairs}\${__tb_env_pairs:+;}host=$__tb_host";`,
-    `  printf '\\033]1338;TBENV;%s\\007\\033]133;D;%s;${salt}\\007\\033]7;file://%s%s\\007' "$__tb_env_pairs" "$__tb_exit" "$__tb_host" "$PWD";`,
+    // Function definition — body uses internal `;` separators.
+    `__tb_remote_prompt() { ` +
+      `local __tb_exit=$?; ` +
+      `local __tb_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); ` +
+      `local __tb_venv="\${VIRTUAL_ENV:+venv=\${VIRTUAL_ENV##*/}}"; ` +
+      `local __tb_conda="\${CONDA_DEFAULT_ENV:+conda=$CONDA_DEFAULT_ENV}"; ` +
+      `local __tb_host=\${HOSTNAME:-$(hostname 2>/dev/null)}; ` +
+      `local __tb_env_pairs="$__tb_venv\${__tb_venv:+\${__tb_conda:+;}}$__tb_conda"; ` +
+      `__tb_env_pairs="\${__tb_env_pairs}\${__tb_env_pairs:+\${__tb_branch:+;}}\${__tb_branch:+branch=$__tb_branch}"; ` +
+      `__tb_env_pairs="\${__tb_env_pairs}\${__tb_env_pairs:+;}host=$__tb_host"; ` +
+      `printf '\\033]1338;TBENV;%s\\007\\033]133;D;%s;${salt}\\007\\033]7;file://%s%s\\007' "$__tb_env_pairs" "$__tb_exit" "$__tb_host" "$PWD"; ` +
     `}`,
     // bash: PROMPT_COMMAND. zsh: precmd function (we set both for safety).
     `PROMPT_COMMAND='__tb_remote_prompt'`,
     `if [ -n "$ZSH_VERSION" ]; then precmd_functions=(__tb_remote_prompt); fi`,
     // Fire once immediately so Termbook learns initial state without waiting.
     `__tb_remote_prompt`,
-  ].join(' ');
-  return bashSnippet;
+  ];
+  return lines.join('; ');
 }
 
 // Heuristic: does this chunk of PTY output look like a fresh remote shell
