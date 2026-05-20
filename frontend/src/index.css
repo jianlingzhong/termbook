@@ -23,7 +23,7 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
 .top-header { height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 40px; border-bottom: 1px solid var(--border-light); background: var(--bg-obsidian); flex-shrink: 0; z-index: 50; }
 .pwd-breadcrumb { display: flex; align-items: center; gap: 8px; font-family: "JetBrains Mono", monospace; font-size: 13px; background: rgba(255, 255, 255, 0.04); padding: 7px 16px; border-radius: 99px; border: 1px solid var(--border-light); color: var(--text-secondary); max-width: 60vw; min-width: 0; }
 .pwd-breadcrumb-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.notebook-content { flex: 1; overflow-y: scroll; padding: 48px; display: flex; flex-direction: column; scroll-behavior: smooth; }
+.notebook-content { flex: 1; overflow-y: scroll; padding: 48px; display: flex; flex-direction: column; scroll-behavior: smooth; overflow-anchor: none; }
 .notebook-cell { margin-bottom: 32px; background: var(--bg-cell); border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2); overflow: hidden; box-shadow: 0 12px 32px rgba(0,0,0,0.3); display: flex; flex-direction: column; width: 100%; min-height: fit-content; }
 .notebook-cell.active-cell { border-color: var(--border-active); box-shadow: 0 0 24px rgba(0, 236, 236, 0.2); }
 .notebook-cell.failed-cell { border-color: rgba(239, 68, 68, 0.35); }
