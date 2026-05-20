@@ -372,7 +372,19 @@ function attachPtyHandlers(session) {
           }
       }
 
-      const finishMatch = parseOutput(session.tailBuf, session.promptSalt);
+      // SSH-aware salt list: when we've injected a SSH integration into a
+      // remote shell, BOTH the local bash salt and the per-SSH salt close
+      // cells (the inner one wins on earliest index). `which` in finishMatch
+      // tells us which.
+      // `allowUnsalted` is kept TRUE for now to preserve the existing "leaky
+      // the SSH integration" behavior where remote shells with their own 133;D markers
+      // (p10k, etc.) cause cell boundaries. The real the SSH integration implementation
+      // (commit C2) flips this to false except during bootstrap.
+      const finishMatch = parseOutput(
+          session.tailBuf,
+          [session.promptSalt, session.sshPromptSalt].filter(Boolean),
+          { allowUnsalted: true },
+      );
       if (session.activeCellId && finishMatch) {
           debugLog(`[FINISH] exit=${finishMatch.exitCode} pwd=${JSON.stringify(finishMatch.pwd)} env=${JSON.stringify(finishMatch.env || {})}`);
       }
