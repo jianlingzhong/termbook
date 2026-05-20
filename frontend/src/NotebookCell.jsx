@@ -267,7 +267,9 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
             usedTui && !isRunning
               ? { minHeight: '32px', background: '#000', overflow: 'hidden' }
               : displaySnapshot
-              ? { maxHeight: expanded ? 'none' : '80vh', overflowY: expanded ? 'visible' : 'auto', background: '#000' }
+              // Snapshot cap leaves room for the chat input (~150px) so the
+              // overflow hint isn't covered by the input gradient.
+              ? { maxHeight: expanded ? 'none' : 'calc(80vh - 100px)', overflowY: expanded ? 'visible' : 'auto', background: '#000' }
               : isTuiActive
                 ? { height: '120px', minHeight: '120px', background: '#000' }
                 : (() => {
