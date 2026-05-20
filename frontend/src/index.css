@@ -148,6 +148,7 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
 .chat-input-wrapper.is-running { border-color: rgba(0,236,236,0.15); opacity: 0.65; }
 .chat-input-wrapper.is-running textarea { cursor: not-allowed; }
 .chat-input-wrapper.is-tui { border-color: rgba(255,189,46,0.35); opacity: 0.7; }
+.chat-input-wrapper.is-passthrough { border-color: rgba(0,236,236,0.4); box-shadow: 0 0 0 1px rgba(0,236,236,0.15), 0 16px 48px rgba(0,0,0,0.7); }
 .running-spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(0,236,236,0.2); border-top-color: var(--accent-cyan); display: inline-block; animation: tb-spin 0.8s linear infinite; }
 @keyframes tb-spin { to { transform: rotate(360deg); } }
 .pwd-prompt-prefix { font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--accent-cyan); font-weight: 600; white-space: nowrap; flex-shrink: 0; }

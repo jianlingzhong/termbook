@@ -97,7 +97,10 @@ function App() {
   useEffect(() => { sessionSocketsRef.current = sessionSockets; }, [sessionSockets]);
   useEffect(() => { sessionCellsRef.current = sessionCells; }, [sessionCells]);
 
-  const isInputUsable = activeSessionId && !sessionRunning[activeSessionId] && !sessionTuiStates[activeSessionId];
+  // Input is "usable" whenever there's a session and we're not in
+  // alt-screen TUI mode (which is hosted in a modal). If a command is
+  // running, typing is forwarded to its PTY (gemini-style passthrough).
+  const isInputUsable = activeSessionId && !sessionTuiStates[activeSessionId];
   useEffect(() => {
     if (isInputUsable && inputRef.current) {
       const id = requestAnimationFrame(() => inputRef.current?.focus());
@@ -473,6 +476,37 @@ function App() {
   };
 
   const handleCommand = (e) => {
+    // Passthrough mode: a command is running, so every keystroke in the
+    // chat input goes straight to its PTY. We don't care whether it's
+    // gemini, cat (waiting for stdin), or anything else — interactive
+    // commands of any kind get their input this way.
+    if (isPassthrough) {
+      const ws = sessionSockets[activeSessionId];
+      if (!ws || ws.readyState !== 1) return;
+      // Still let palette / history-search / fullscreen bubble up.
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'r' || e.key === 'K' || e.key === 'R')) return;
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) return;
+      let send = null;
+      if (e.key === 'Enter') send = '\r';
+      else if (e.key === 'Backspace') send = '\x7f';
+      else if (e.key === 'Tab') send = '\t';
+      else if (e.key === 'Escape') send = '\x1b';
+      else if (e.key === 'ArrowUp') send = '\x1b[A';
+      else if (e.key === 'ArrowDown') send = '\x1b[B';
+      else if (e.key === 'ArrowRight') send = '\x1b[C';
+      else if (e.key === 'ArrowLeft') send = '\x1b[D';
+      else if (e.ctrlKey && e.key.length === 1) {
+        const c = e.key.toLowerCase().charCodeAt(0);
+        if (c >= 97 && c <= 122) send = String.fromCharCode(c - 96);
+      }
+      else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) send = e.key;
+      if (send != null) {
+        e.preventDefault();
+        ws.send(JSON.stringify({ type: 'input', data: send }));
+        setInputValue('');
+      }
+      return;
+    }
     const isMultiline = inputValue.includes('\n');
     if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
       e.preventDefault();
@@ -571,6 +605,10 @@ function App() {
   };
 
   const activeTuiState = sessionTuiStates[activeSessionId];
+  // Passthrough mode: any time a non-modal command is running, typing in
+  // the chat input forwards keystrokes to that command's PTY. No detection,
+  // no heuristics — just "if a command is running, route input to it".
+  const isPassthrough = !!sessionRunning[activeSessionId] && !activeTuiState;
 
   const lastCommand = (() => {
     const cells = sessionCells[activeSessionId] || [];
@@ -787,21 +825,24 @@ function App() {
               <span className="completion-hint-kbd"><kbd>Tab</kbd> to cycle</span>
             </div>
           )}
-          <div className={`chat-input-wrapper${sessionRunning[activeSessionId] ? ' is-running' : ''}${activeTuiState ? ' is-tui' : ''}`}>
+          <div className={`chat-input-wrapper${isPassthrough ? ' is-passthrough' : ''}${activeTuiState ? ' is-tui' : ''}`}>
             <span className="pwd-prompt-prefix">
-              {sessionRunning[activeSessionId] ? <span className="running-spinner" aria-hidden="true" /> : <span>termbook ❯</span>}
+              {isPassthrough ? <span className="running-spinner" aria-hidden="true" /> : <span>termbook ❯</span>}
             </span>
             <textarea
                 ref={inputRef} value={inputValue}
                 onChange={(e) => {
+                    // In passthrough mode, keystrokes are sent via onKeyDown
+                    // to the running PTY, not buffered into inputValue.
+                    if (isPassthrough) return;
                     setInputValue(e.target.value);
                     if (historyIdx !== -1 && e.target.value !== history[historyIdx]) setHistoryIdx(-1);
                     e.target.style.height = 'auto';
                     e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
                 }}
                 onKeyDown={handleCommand}
-                placeholder={sessionRunning[activeSessionId] ? 'Command running…' : activeTuiState ? 'TUI active — interact in the modal above' : 'Enter terminal command…'}
-                disabled={sessionRunning[activeSessionId] || !!activeTuiState} rows={1}
+                placeholder={isPassthrough ? 'Sending keystrokes to running command…' : activeTuiState ? 'TUI active — interact in the modal above' : 'Enter terminal command…'}
+                disabled={!!activeTuiState} rows={1}
                 autoFocus
                 spellCheck={false}
                 autoComplete="off"
