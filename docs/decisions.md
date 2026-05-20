@@ -359,6 +359,43 @@ See `NotebookCell.jsx:123-138` (safety margin) and
 
 ---
 
+### Welcome state must not be pushed off-screen by the bottom-sentinel {#welcome-sentinel}
+
+**Was**: a 240px bottom-sentinel `<div>` was rendered unconditionally
+inside `.notebook-content` so the latest cell could always scroll to
+viewport top. On an empty session (no cells), the centered welcome
+block + sentinel together overflowed the viewport, and the page
+auto-scrolled to the bottom — so the user saw only the "Try: [chips]"
+footer of the welcome with the logo/title/tips off-screen above.
+
+**Now**: render the sentinel **only when at least one cell exists**.
+On empty sessions, the welcome state fills the natural flow without a
+forced overflow.
+
+See `App.jsx` `(sessionCells[activeSessionId] || []).length > 0 && <div ... />`.
+
+---
+
+### "Show all (N lines)" hint must sit above the input gradient {#overflow-hint-z}
+
+**Was**: long cells were capped at `max-height: 80vh`. A "Show all
+(N lines)" hint sat at the bottom of the cell-output-wrap. With cells
+extending past the visible area, the hint frequently landed *inside*
+the bottom region that the chat-input gradient covers (the input has
+`z-index: 200` and a ~100px upward gradient), making the hint
+invisible.
+
+**Now**:
+1. Cap reduced to `calc(80vh - 100px)` to leave room for the input.
+2. Hint's `z-index: 250` to sit above the input gradient.
+3. Tightened the input container padding (`16px 40px 24px`, was `40px`
+   uniform) and steepened the top gradient stop to reduce intrusion.
+
+See `NotebookCell.jsx` (display-snapshot maxHeight) and `index.css`
+(`.cell-overflow-hint { z-index: 250 }`).
+
+---
+
 ### Cell header should hug single-line content {#cell-header-hug}
 
 **Was**: `.cell-header` had `min-height: 56px` + `padding: 16px 20px` +
