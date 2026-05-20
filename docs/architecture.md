@@ -225,8 +225,29 @@ If injection doesn't produce a salted marker within 8 s
 (non-bash/zsh remote shell, output suppressed, etc.), `sshState='failed'`
 and Termbook degrades to today's "leaky Path B" behavior automatically.
 
-Tested by `frontend/tests/e2e/08_ssh_session.spec.mjs` (10 tests
-including the regression test for unsalted-marker spoofing).
+**Remote Tab completion**: chat input's Tab routes through the remote
+shell via a salted PTY-RPC (the `__tb_complete` function installed by
+the bootstrap). Backend's `/api/complete` checks `session.sshActive`
+and either calls `requestRemoteCompletion` (RPC over the existing PTY,
+600ms timeout, response markers stripped from the broadcast stream)
+or falls back to the local completion module. Completion candidates
+reach the user normally; the user is unaware whether the source was
+local or remote.
+
+**Control-key forwarding** when chat input is idle in Path B:
+- Ctrl+D at empty input → `\x04` to remote PTY → remote bash EOFs → ssh
+  exits → session ends (matches every-terminal-ever expectation).
+- Ctrl+C with content → `\x03` to remote PTY + clear chat input locally
+  (clears any partial line on remote's line editor too).
+- Ctrl+L kept LOCAL (clear notebook history).
+
+Frontend tracks `sessionSshActive[id]` driven by `session_init.sshActive`
+on join and `'ssh_state'` WS messages on transitions.
+
+Tested by `frontend/tests/e2e/08_ssh_session.spec.mjs` (13 tests covering
+happy path, remote pwd/git/exit, vim TUI over SSH, --no-termbook opt-out,
+nested ssh, the security regression for unsalted-marker spoofing, remote
+Tab completion with cycling, and Ctrl+C / Ctrl+D forwarding).
 
 ## Scroll behavior
 
