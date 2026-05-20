@@ -146,21 +146,82 @@ function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [isInputUsable, activeSessionId, sessionTuiStates, sessionSockets]);
 
+  // Scroll behavior contract:
+  //   - After submitting a new command: ALWAYS scroll the new cell to the
+  //     top of the viewport, clearing any saved user-scroll position.
+  //   - On session switch: DEFAULT to "latest cell at top of viewport".
+  //     If the user had explicitly scrolled this session before leaving it,
+  //     restore that scroll position instead.
+  //   - The user explicitly scrolled = any scroll event the browser fires
+  //     that we did NOT programmatically initiate.
   const userScrolledUpRef = useRef(false);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const lastCellCountRef = useRef(0);
   const SCROLL_BOTTOM_THRESHOLD = 120;
+
+  // Per-session: { scrollTop, userScrolled }. We persist this across
+  // session switches so each session remembers where the user was looking.
+  const sessionScrollMemoRef = useRef({});
+
+  // The "user scrolled" signal comes from explicit input events
+  // (wheel / touch / scroll-related keys), NOT from generic scroll events.
+  // Why: layout shifts from session swaps, new cells appearing, fit-addon
+  // recalcs, etc. all fire scroll events that look identical to a real
+  // user scroll. Listening for input events instead is robust.
+  const lastUserScrollAtRef = useRef(0);
+  const markUserScroll = () => { lastUserScrollAtRef.current = Date.now(); };
+
+  // Scrolls so that the last cell's top edge sits 16px below the viewport
+  // top (i.e. the new cell becomes the focus of attention).
+  const scrollLastCellToTop = (sc) => {
+    const lastCell = sc.querySelector('.notebook-cell:last-of-type');
+    if (!lastCell) return;
+    sc.scrollTop = Math.max(0, lastCell.offsetTop - 16);
+  };
+
   useEffect(() => {
     const sc = scrollRef.current; if (!sc) return;
     const onScroll = () => {
       const distFromBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight;
       const isUp = distFromBottom > SCROLL_BOTTOM_THRESHOLD;
-      userScrolledUpRef.current = isUp;
       setShowJumpToBottom(isUp);
+      // Only treat this scroll as user-initiated if a wheel/touch/scroll-key
+      // event happened within the last 500ms.
+      const recentlyByUser = Date.now() - lastUserScrollAtRef.current < 500;
+      if (!recentlyByUser) return;
+      userScrolledUpRef.current = isUp;
+      if (activeSessionId) {
+        sessionScrollMemoRef.current[activeSessionId] = {
+          scrollTop: sc.scrollTop,
+          userScrolled: true,
+        };
+      }
     };
     sc.addEventListener('scroll', onScroll, { passive: true });
-    return () => sc.removeEventListener('scroll', onScroll);
-  }, []);
+
+    const onWheel = () => markUserScroll();
+    const onTouchMove = () => markUserScroll();
+    const onKeyForScroll = (e) => {
+      if (['PageUp','PageDown','Home','End','ArrowUp','ArrowDown'].includes(e.key)) {
+        // Only count Arrow keys as scroll if the input isn't focused —
+        // otherwise we'd misclassify history-recall as scrolling.
+        const ae = document.activeElement;
+        const inText = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+        if (inText && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) return;
+        markUserScroll();
+      }
+    };
+    sc.addEventListener('wheel', onWheel, { passive: true });
+    sc.addEventListener('touchmove', onTouchMove, { passive: true });
+    window.addEventListener('keydown', onKeyForScroll);
+
+    return () => {
+      sc.removeEventListener('scroll', onScroll);
+      sc.removeEventListener('wheel', onWheel);
+      sc.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('keydown', onKeyForScroll);
+    };
+  }, [activeSessionId]);
 
   const cells = sessionCells[activeSessionId] || [];
   useEffect(() => {
@@ -171,14 +232,16 @@ function App() {
     if (cellCount === 0) return;
 
     if (cellCount > prevCount) {
+      // A new cell appeared — submit-scroll-to-top.
       requestAnimationFrame(() => {
         if (!scrollRef.current) return;
-        const lastCell = scrollRef.current.querySelector('.notebook-cell:last-of-type');
-        if (lastCell) {
-          const offset = lastCell.offsetTop - 16;
-          scrollRef.current.scrollTop = offset;
-          userScrolledUpRef.current = false;
-          setShowJumpToBottom(false);
+        scrollLastCellToTop(scrollRef.current);
+        userScrolledUpRef.current = false;
+        setShowJumpToBottom(false);
+        if (activeSessionId) {
+          // Submit explicitly resets the saved scroll memory for this
+          // session — the user's attention moved to the new cell.
+          delete sessionScrollMemoRef.current[activeSessionId];
         }
       });
       return;
@@ -191,14 +254,27 @@ function App() {
         if (sc.scrollTop < offset) sc.scrollTop = offset;
       }
     }
-  }, [cells]);
+  }, [cells, activeSessionId]);
 
   useEffect(() => {
     const sc = scrollRef.current; if (!sc) return;
-    userScrolledUpRef.current = false;
-    setShowJumpToBottom(false);
     lastCellCountRef.current = (sessionCells[activeSessionId] || []).length;
-    sc.scrollTop = sc.scrollHeight;
+    const memo = activeSessionId ? sessionScrollMemoRef.current[activeSessionId] : null;
+    if (memo && memo.userScrolled) {
+      // Restore where the user was looking when they left this session.
+      userScrolledUpRef.current = true;
+      setShowJumpToBottom(memo.scrollTop > 0);
+      requestAnimationFrame(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = memo.scrollTop;
+      });
+    } else {
+      // Default: latest cell at the top of the viewport.
+      userScrolledUpRef.current = false;
+      setShowJumpToBottom(false);
+      requestAnimationFrame(() => {
+        if (scrollRef.current) scrollLastCellToTop(scrollRef.current);
+      });
+    }
   }, [activeSessionId]);
 
   const jumpToBottom = () => {
