@@ -158,6 +158,135 @@ export async function cellCount(page) {
     return await page.locator('.notebook-cell').count();
 }
 
+// Geometry of the active session's notebook scroll container and cells.
+//
+// Uses element.offsetTop (distance within scroll container) rather than
+// getBoundingClientRect (viewport-relative, which is misleading inside a
+// scroll container — clipped content still reports its render position).
+export async function scrollGeometry(page) {
+    return await page.evaluate(() => {
+        const sc = document.querySelector('.notebook-content');
+        if (!sc) return null;
+        const cells = Array.from(document.querySelectorAll('.notebook-cell'));
+        const cellInfos = cells.map(c => {
+            const cmd = c.querySelector('.read-only-command')?.textContent || '';
+            return {
+                cmd,
+                offsetTop: c.offsetTop,
+                offsetBottom: c.offsetTop + c.offsetHeight,
+                height: c.offsetHeight,
+                // viewportTop = where the cell appears on screen.
+                // Negative or > clientHeight means it's scrolled out.
+                viewportTop: c.offsetTop - sc.scrollTop,
+                viewportBottom: c.offsetTop + c.offsetHeight - sc.scrollTop,
+            };
+        });
+        const lastCell = cells[cells.length - 1];
+        const scRect = sc.getBoundingClientRect();
+        return {
+            scrollTop: Math.round(sc.scrollTop),
+            scrollHeight: Math.round(sc.scrollHeight),
+            clientHeight: Math.round(sc.clientHeight),
+            distFromBottom: Math.round(sc.scrollHeight - sc.scrollTop - sc.clientHeight),
+            atTop: sc.scrollTop < 10,
+            atBottom: sc.scrollHeight - sc.scrollTop - sc.clientHeight < 10,
+            cellCount: cells.length,
+            cells: cellInfos,
+            lastCellOffsetTop: lastCell ? lastCell.offsetTop : null,
+            // viewportTop relative to the scroll container's top edge (0 = at top of container).
+            lastCellViewportTop: lastCell ? (lastCell.offsetTop - sc.scrollTop) : null,
+            scrollContainerTop: Math.round(scRect.top),
+            scrollContainerBottom: Math.round(scRect.bottom),
+        };
+    });
+}
+
+// Assert the latest cell's top edge is at the top of the scroll container
+// (within ~32px tolerance for the 16px anchor gap + sub-pixel rounding).
+//
+// Uses `lastCellViewportTop` (offsetTop - scrollTop), which is the cell's
+// position RELATIVE to the scroll container's top edge:
+//   0  = cell starts exactly at container top
+//   16 = cell starts 16px below container top (our default anchor)
+//   negative = cell is scrolled above the visible area (clipped)
+//   > clientHeight = cell is below the visible area (clipped)
+//
+// Special case: if scrollable distance is too small to position the cell
+// at the top (short content or sentinel padding less than viewport), the
+// cell will sit wherever scrollTop's maximum value leaves it. In that
+// case we just assert the cell is visible somewhere.
+export async function assertLatestCellAtTop(page, anchorPx = 16, tolerancePx = 32) {
+    const g = await scrollGeometry(page);
+    const vTop = g.lastCellViewportTop;
+
+    // Can we even scroll the cell to the desired position?
+    // Max scrollable = scrollHeight - clientHeight.
+    // To get cell at viewport top, need scrollTop = cell.offsetTop - anchorPx.
+    const desiredScrollTop = g.lastCellOffsetTop - anchorPx;
+    const maxScrollTop = g.scrollHeight - g.clientHeight;
+    const canPositionAtTop = desiredScrollTop <= maxScrollTop;
+
+    if (canPositionAtTop) {
+        if (Math.abs(vTop - anchorPx) > tolerancePx) {
+            throw new Error(
+                `expected latest cell at top of viewport ` +
+                `(viewportTop ~${anchorPx}px, tolerance ${tolerancePx}); ` +
+                `got viewportTop=${vTop}. Full geometry: ${JSON.stringify(g, null, 2)}`
+            );
+        }
+    } else {
+        // Best we can do is scroll to bottom (max scrollTop). Cell sits
+        // wherever flow puts it. Just ensure it's visible.
+        if (vTop < 0 || vTop > g.clientHeight) {
+            throw new Error(
+                `cannot position cell at top (not enough scrollable space), ` +
+                `and cell isn't visible either. viewportTop=${vTop}, clientHeight=${g.clientHeight}. ` +
+                `geometry: ${JSON.stringify(g, null, 2)}`
+            );
+        }
+    }
+    return { viewportTop: vTop, geometry: g };
+}
+
+// Wheel-scroll up by N pixels (positive N = scroll up = scrollTop decreases).
+export async function userScrollUp(page, pixels = 2000) {
+    await page.locator('.notebook-content').hover();
+    await page.mouse.wheel(0, -pixels);
+    await page.waitForTimeout(800);
+}
+
+// Wheel-scroll down by N pixels.
+export async function userScrollDown(page, pixels = 2000) {
+    await page.locator('.notebook-content').hover();
+    await page.mouse.wheel(0, pixels);
+    await page.waitForTimeout(800);
+}
+
+// Programmatically jump to a specific scroll position (counts as
+// user-initiated because we precede it with a wheel event).
+export async function userScrollTo(page, scrollTop) {
+    await page.locator('.notebook-content').hover();
+    // Tiny wheel just to register as user activity.
+    await page.mouse.wheel(0, 1);
+    await page.waitForTimeout(50);
+    await page.locator('.notebook-content').evaluate((el, top) => { el.scrollTop = top; }, scrollTop);
+    await page.waitForTimeout(800);
+}
+
+// Create a new session, returns the sidebar count.
+export async function newSession(page) {
+    await page.locator('.sidebar h2 + button').click();
+    await page.waitForTimeout(2000);
+    await waitInputReady(page);
+    return await page.locator('.sidebar ul li').count();
+}
+
+// Click the Nth session in the sidebar (0-indexed, chronological).
+export async function switchToSessionByIndex(page, idx) {
+    await page.locator('.sidebar ul li').nth(idx).click();
+    await page.waitForTimeout(1500);
+}
+
 // Inspect the last cell's metadata.
 export async function lastCellInfo(page) {
     return await page.evaluate(() => {

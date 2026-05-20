@@ -163,6 +163,14 @@ function App() {
   // session switches so each session remembers where the user was looking.
   const sessionScrollMemoRef = useRef({});
 
+  // Pending scroll action to perform after the new session's cells render.
+  // The activeSessionId effect fires BEFORE React renders the new session's
+  // cells into the DOM, so calling scrollLastCellToTop() in that effect
+  // operates on the OLD DOM. We queue the intent here and the cells effect
+  // executes it after the DOM is fresh.
+  //   { kind: 'restoreMemo', scrollTop } | { kind: 'latestAtTop' } | null
+  const pendingScrollRef = useRef(null);
+
   // The "user scrolled" signal comes from explicit input events
   // (wheel / touch / scroll-related keys), NOT from generic scroll events.
   // Why: layout shifts from session swaps, new cells appearing, fit-addon
@@ -173,8 +181,16 @@ function App() {
 
   // Scrolls so that the last cell's top edge sits 16px below the viewport
   // top (i.e. the new cell becomes the focus of attention).
+  // NOTE: we cannot use ':last-of-type' here because the notebook also
+  // renders a sentinel <div> after the cells (the 240px bottom padding),
+  // so ':last-of-type' picks the sentinel (a div) over the last cell.
+  // querySelectorAll + indexing avoids that trap.
+  const queryLastCell = (sc) => {
+    const cells = sc.querySelectorAll('.notebook-cell');
+    return cells.length ? cells[cells.length - 1] : null;
+  };
   const scrollLastCellToTop = (sc) => {
-    const lastCell = sc.querySelector('.notebook-cell:last-of-type');
+    const lastCell = queryLastCell(sc);
     if (!lastCell) return;
     sc.scrollTop = Math.max(0, lastCell.offsetTop - 16);
   };
@@ -223,13 +239,64 @@ function App() {
     };
   }, [activeSessionId]);
 
+  // IMPORTANT: This effect must be declared BEFORE the cells effect so
+  // React runs it FIRST when activeSessionId changes. It sets up
+  // pendingScrollRef and resets lastCellCountRef to the new session's
+  // count, so the cells effect (which sees the new cells) doesn't
+  // misinterpret the session swap as "a new cell was submitted".
+  useEffect(() => {
+    const sc = scrollRef.current; if (!sc) return;
+    lastCellCountRef.current = (sessionCells[activeSessionId] || []).length;
+    const memo = activeSessionId ? sessionScrollMemoRef.current[activeSessionId] : null;
+    if (memo && memo.userScrolled) {
+      userScrolledUpRef.current = true;
+      setShowJumpToBottom(memo.scrollTop > 0);
+      pendingScrollRef.current = { kind: 'restoreMemo', scrollTop: memo.scrollTop };
+    } else {
+      userScrolledUpRef.current = false;
+      setShowJumpToBottom(false);
+      pendingScrollRef.current = { kind: 'latestAtTop' };
+    }
+  }, [activeSessionId]);
+
   const cells = sessionCells[activeSessionId] || [];
   useEffect(() => {
     const sc = scrollRef.current; if (!sc) return;
     const cellCount = cells.length;
     const prevCount = lastCellCountRef.current;
     lastCellCountRef.current = cellCount;
-    if (cellCount === 0) return;
+    if (cellCount === 0) {
+      // Cells aren't rendered yet — keep pending scroll for later.
+      return;
+    }
+
+    // Honor a pending scroll action queued by the activeSessionId effect.
+    // We may need to retry across a few frames because React's commit and
+    // browser layout don't always settle in a single rAF.
+    const pending = pendingScrollRef.current;
+    if (pending) {
+      pendingScrollRef.current = null;
+      const tryApply = (attemptsLeft) => {
+        requestAnimationFrame(() => {
+          const cur = scrollRef.current;
+          if (!cur) return;
+          if (pending.kind === 'restoreMemo') {
+            cur.scrollTop = pending.scrollTop;
+            return;
+          }
+          if (pending.kind === 'latestAtTop') {
+            const lc = queryLastCell(cur);
+            if (lc) {
+              cur.scrollTop = Math.max(0, lc.offsetTop - 16);
+              return;
+            }
+            if (attemptsLeft > 0) tryApply(attemptsLeft - 1);
+          }
+        });
+      };
+      tryApply(8);
+      return;
+    }
 
     if (cellCount > prevCount) {
       // A new cell appeared — submit-scroll-to-top.
@@ -248,34 +315,13 @@ function App() {
     }
 
     if (!userScrolledUpRef.current) {
-      const lastCell = sc.querySelector('.notebook-cell:last-of-type');
+      const lastCell = queryLastCell(sc);
       if (lastCell) {
         const offset = lastCell.offsetTop - 16;
         if (sc.scrollTop < offset) sc.scrollTop = offset;
       }
     }
   }, [cells, activeSessionId]);
-
-  useEffect(() => {
-    const sc = scrollRef.current; if (!sc) return;
-    lastCellCountRef.current = (sessionCells[activeSessionId] || []).length;
-    const memo = activeSessionId ? sessionScrollMemoRef.current[activeSessionId] : null;
-    if (memo && memo.userScrolled) {
-      // Restore where the user was looking when they left this session.
-      userScrolledUpRef.current = true;
-      setShowJumpToBottom(memo.scrollTop > 0);
-      requestAnimationFrame(() => {
-        if (scrollRef.current) scrollRef.current.scrollTop = memo.scrollTop;
-      });
-    } else {
-      // Default: latest cell at the top of the viewport.
-      userScrolledUpRef.current = false;
-      setShowJumpToBottom(false);
-      requestAnimationFrame(() => {
-        if (scrollRef.current) scrollLastCellToTop(scrollRef.current);
-      });
-    }
-  }, [activeSessionId]);
 
   const jumpToBottom = () => {
     const sc = scrollRef.current; if (!sc) return;
