@@ -101,19 +101,32 @@ Common tags: `[SESSION_CREATE]`, `[WS_JOIN]`, `[COMMAND_START]`,
 
 ## Running tests
 
+There are **two test tiers**. `npm run test:all` runs both.
+
 ```bash
 cd frontend
-npm run test:visual          # 20 tests, ~100s
-npm run test:motion          # 8 motion tests (~40s)
-npm run test:regression      # 12 regression tests (~60s)
 
-# single test
-npx playwright test --config playwright.visual.config.js \
-    -g "does not flash"
+npm run test:visual          # 40 functional + motion tests (~3 min)
+npm run test:e2e             # 40 end-to-end tests with screenshots/video (~5 min)
+npm run test:all             # both, in sequence
+
+# regenerate pixel goldens after intentional UI change
+npm run test:e2e:update
+
+# watch the browser drive itself
+npm run test:e2e:headed
+
+# focused runs
+npm run test:motion          # motion subset of visual
+npm run test:regression      # functional subset of visual
+
+# single test by name pattern
+npx playwright test --config playwright.e2e.config.js \
+    -g "passthrough"
 
 # debug a failing test interactively
-npx playwright test --config playwright.visual.config.js \
-    -g "pwd" --debug
+npx playwright test --config playwright.e2e.config.js \
+    -g "vim" --debug
 
 # after failure, watch the recorded video
 open frontend/test-results/<test-dir>/video.webm
@@ -121,6 +134,24 @@ open frontend/test-results/<test-dir>/video.webm
 # open the failure trace
 npx playwright show-trace frontend/test-results/<test-dir>/trace.zip
 ```
+
+When to use which:
+
+- **`tests/visual/regression.spec.mjs`**: a single, focused regression
+  for a specific bug. Fast. Add an entry whenever you fix something.
+- **`tests/visual/motion.spec.mjs`**: a flash/jump/focus-loss that's
+  only visible *during* a transition. Use `maxCellHeightDuring()` or
+  similar polling.
+- **`tests/e2e/*.spec.mjs`**: full user workflows that span multiple
+  commands / sessions / pages. These produce screencasts + labeled
+  screenshots automatically. Use `shot(page, testInfo, 'label')` to
+  attach milestone screenshots to the HTML report.
+- **`tests/e2e/06_visual_snapshots.spec.mjs`** and **`07_scroll_behavior.spec.mjs`**
+  (G1/G2): pixel-level snapshot tests. Diffs against committed PNGs.
+  After an intentional UI change, regenerate with `npm run test:e2e:update`
+  AND visually inspect every regenerated golden before committing.
+
+See [`docs/testing.md`](testing.md) for the full guide.
 
 ## Common pitfalls
 
@@ -221,28 +252,32 @@ frontend/src/NotebookCell.jsx
 These line numbers will drift as the code changes. Use them as a
 starting point, not gospel.
 
-## How to add a new visual test
+## How to add a new test
 
-1. Decide if it's motion or functional. If you're catching something
-   that's only visible *during* a transition (flash, intermediate
-   state, layout jump), it's motion. Otherwise it's regression.
+Decision flow:
 
-2. Open `frontend/tests/visual/motion.spec.mjs` or `regression.spec.mjs`.
+1. Is the test about a single defect / regression you just fixed? Add
+   to `frontend/tests/visual/regression.spec.mjs`. Fast, focused.
+2. Is it about a *transient* flash / focus loss / layout jump? Add to
+   `frontend/tests/visual/motion.spec.mjs` (use `maxCellHeightDuring()`
+   or `sampleDuring()`).
+3. Is it a multi-step user workflow (open session, run commands, switch
+   sessions, etc.)? Add to `frontend/tests/e2e/*.spec.mjs`. These
+   automatically produce a screencast and labeled screenshots.
+4. Is it about pixel-perfect appearance? Add a `toHaveScreenshot()`
+   assertion in `tests/e2e/06_visual_snapshots.spec.mjs` or
+   `07_scroll_behavior.spec.mjs`. The golden goes in
+   `<spec>.mjs-snapshots/` and is committed.
 
-3. Use helpers from `./helpers.mjs`. Don't import Playwright fixtures
-   directly — the helpers handle the input-disabled-during-command
-   nuance.
+For ALL of them: verify the test fails without your fix, passes with
+it. See [`docs/decisions.md`](decisions.md) ("Motion tests must verify
+the test catches the bug").
 
-4. For motion tests, use `maxCellHeightDuring()` or write your own
-   polling loop. Don't rely on `expect(page.locator(...).toHaveScreenshot())`
-   alone — too brittle.
+Use helpers from `helpers.mjs` in each test directory. Don't import
+Playwright fixtures directly — the helpers handle the
+input-disabled-during-command nuance.
 
-5. Verify your test fails without the fix, passes with it. See
-   [`docs/decisions.md`](decisions.md) ("Motion tests must verify the
-   test catches the bug").
-
-6. `cd frontend && npm run test:visual` should pass 20/20 (now 21/21
-   with your addition).
+Full pattern docs and helper reference: [`docs/testing.md`](testing.md).
 
 ## Commit style
 
