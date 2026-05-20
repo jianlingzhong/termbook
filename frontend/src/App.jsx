@@ -5,7 +5,7 @@ import { Terminal } from 'xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import 'xterm/css/xterm.css';
-import { TerminalSquare, Plus, Folder, Hash, X, ChevronDown } from 'lucide-react';
+import { TerminalSquare, Plus, Folder, Hash, X, ChevronDown, Maximize2, Minimize2 } from 'lucide-react';
 import './index.css';
 
 function shortenPath(p) {
@@ -73,6 +73,17 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [paletteIdx, setPaletteIdx] = useState(0);
+  const [isMaximized, setIsMaximized] = useState(() => {
+    try { return localStorage.getItem('termbook_maximized') === '1'; } catch { return false; }
+  });
+
+  const toggleMaximized = () => {
+    setIsMaximized(prev => {
+      const next = !prev;
+      try { localStorage.setItem('termbook_maximized', next ? '1' : '0'); } catch {}
+      return next;
+    });
+  };
   const pushHistory = (cmd) => {
     setHistory(prev => {
       const next = (prev[prev.length - 1] === cmd ? prev : [...prev, cmd]).slice(-500);
@@ -112,6 +123,16 @@ function App() {
         setPaletteOpen(true);
         setPaletteQuery('');
         setPaletteIdx(0);
+        return;
+      }
+      // Toggle full-screen workspace (hide sidebar + top-header).
+      // Cmd/Ctrl+Shift+F: 'F' for full-screen. Doesn't conflict with browser
+      // find (Cmd+F) or browser fullscreen (which uses Cmd+Ctrl+F on macOS).
+      // The input-level handler does NOT also bind this — both firing would
+      // toggle twice and net zero.
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        toggleMaximized();
         return;
       }
       if (!inTextField && isInputUsable && inputRef.current && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.length === 1) {
@@ -489,6 +510,11 @@ function App() {
       setPaletteIdx(0);
       return;
     }
+    // Cmd+Shift+F (fullscreen) is handled at the window level only — see the
+    // useEffect global onKey handler. Including it here as well would cause
+    // toggleMaximized() to run TWICE (input handler + window handler both
+    // see the event since preventDefault doesn't stop propagation), netting
+    // zero change.
     if (e.key === 'ArrowUp' && !e.shiftKey && !isMultiline) {
       if (history.length === 0) return;
       e.preventDefault();
@@ -614,6 +640,12 @@ function App() {
         }
       },
     },
+    {
+      id: 'toggle-fullscreen',
+      label: isMaximized ? 'Exit full screen' : 'Toggle full screen (hide sidebar + header)',
+      hint: '⌘⇧F',
+      run: toggleMaximized,
+    },
   ].filter(Boolean);
 
   const paletteFilteredActions = (() => {
@@ -626,7 +658,7 @@ function App() {
   })();
 
   return (
-    <div className="app-container">
+    <div className={`app-container${isMaximized ? ' is-maximized' : ''}`}>
       <div className="sidebar">
         <div className="sidebar-header"><TerminalSquare size={24} color="var(--accent-cyan)" /><h1>{config.appTitle}</h1></div>
         <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'12px'}}>
@@ -666,6 +698,14 @@ function App() {
                 }}
                 className="clear-history-btn"
              >Clear History</button>
+             <button
+                onClick={toggleMaximized}
+                className="maximize-btn"
+                title={isMaximized ? 'Exit full screen (⌘⇧F)' : 'Full screen (⌘⇧F)'}
+                aria-label={isMaximized ? 'Exit full screen' : 'Enter full screen'}
+             >
+                {isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+             </button>
              {activeTuiState && <div className="tui-active-badge">TUI ACTIVE</div>}
            </div>
         </div>
@@ -688,6 +728,7 @@ function App() {
                 <div className="tip"><kbd>↑</kbd> / <kbd>↓</kbd> history</div>
                 <div className="tip"><kbd>Ctrl</kbd>+<kbd>R</kbd> search history</div>
                 <div className="tip"><kbd>⌘</kbd>+<kbd>K</kbd> action palette</div>
+                <div className="tip"><kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>F</kbd> full screen</div>
                 <div className="tip"><kbd>Esc</kbd> focus input</div>
               </div>
               <div className="empty-state-examples">
@@ -771,6 +812,16 @@ function App() {
           </div>
         </div>
       </div>
+      {isMaximized && (
+        <button
+          className="exit-fullscreen-floating"
+          onClick={toggleMaximized}
+          title="Exit full screen (⌘⇧F)"
+          aria-label="Exit full screen"
+        >
+          <Minimize2 size={14} />
+        </button>
+      )}
       {activeTuiState && <TuiModal activeTerminal={getOrCreateTerminal(activeSessionId, activeTuiState.cellId)} requestResize={requestResizeFor(activeSessionId)} />}
       {historySearch && (
         <div className="history-search-overlay" onClick={() => setHistorySearch(null)}>
