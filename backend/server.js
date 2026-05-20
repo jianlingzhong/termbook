@@ -224,12 +224,30 @@ function spawnPtyForSession(session) {
   const rcPath = path.join(__dirname, `${config.markerPrefix.toLowerCase()}_bashrc_${session.id}`);
   fs.writeFileSync(rcPath, buildBashRc(promptSalt, startCwd));
   debugLog(`[PTY_SPAWN] session ${session.id} shell=${shell} cwd=${startCwd}`);
+  // Build the PTY env, stripping CI-detection markers that some tools
+  // (e.g. gemini-cli, npm, chalk, Ink) use to switch into a non-interactive
+  // / no-color "headless" mode. We ARE an interactive terminal, so these
+  // shouldn't be inherited from however the backend was launched.
+  //
+  // Strip: CI, GITHUB_ACTIONS, BUILDKITE, RUN_ID, CONTINUOUS_INTEGRATION,
+  // NO_COLOR. Also reset TERM to xterm-256color so anything that saw
+  // TERM=dumb on the parent gets a real terminal.
+  const childEnv = { ...process.env };
+  for (const k of ['CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'BUILDKITE', 'RUN_ID', 'GITLAB_CI', 'JENKINS_URL', 'NO_COLOR']) {
+    delete childEnv[k];
+  }
+  childEnv.TERM = 'xterm-256color';
+  childEnv.COLORTERM = 'truecolor';
+  childEnv.FORCE_COLOR = '3';
+  // Some terminals advertise themselves so apps can opt-in to richer
+  // integrations. Identify ourselves as Termbook.
+  childEnv.TERM_PROGRAM = 'termbook';
   const ptyProcess = pty.spawn(shell, ['--rcfile', rcPath, '-i'], {
     name: 'xterm-256color',
     cols: 120,
     rows: 24,
     cwd: startCwd,
-    env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', FORCE_COLOR: '3' },
+    env: childEnv,
   });
   session.ptyProcess = ptyProcess;
   session.promptSalt = promptSalt;
@@ -351,6 +369,19 @@ function attachPtyHandlers(session) {
               const hideCursor = dataStr.includes('\x1b[?25l');
               cellRef._ansiScore = (cellRef._ansiScore || 0) + cursorMoves + clearOps * 2 + (hideCursor ? 5 : 0);
               if (cellRef._ansiScore > 40) cellRef.inlineTuiLike = true;
+              // Inline TUI promotion: some interactive CLIs (gemini, ink-based
+              // apps) render full-screen prompts WITHOUT entering the
+              // alt-screen buffer (1049h), so our normal TUI detection misses
+              // them. If the ANSI activity score crosses a threshold, treat
+              // the cell as a TUI: open the modal, route user input to the
+              // PTY, and stop trying to parse the inline OSC 133 marker
+              // (which won't arrive until the inline app exits).
+              if (!session.isTuiActive && cellRef._ansiScore > 60) {
+                  debugLog(`[INLINE_TUI_PROMOTE] session ${sessionId} cellId=${cellRef.id} score=${cellRef._ansiScore}`);
+                  session.isTuiActive = true;
+                  cellRef.usedTui = true;
+                  for (const ws of session.clients) ws.send(JSON.stringify({ type: 'tui_enter', cellId: session.activeCellId, inline: true }));
+              }
           }
       }
 
