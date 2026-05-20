@@ -344,11 +344,68 @@ const SSH_INJECT_TIMEOUT_MS = 8000;   // give up trying to inject after this man
 
 function clearSshState(session) {
   if (session.sshIdleTimer) { clearTimeout(session.sshIdleTimer); session.sshIdleTimer = null; }
+  // Reject any in-flight remote completion requests; they can't possibly
+  // succeed now that the ssh session is gone.
+  if (session.pendingCompletions && session.pendingCompletions.length > 0) {
+      for (const pc of session.pendingCompletions) {
+          try { pc.reject(new Error('ssh session ended')); } catch (e) {}
+      }
+      session.pendingCompletions = [];
+  }
+  session.completionLeftover = '';
   session.sshActive = false;
   session.sshHost = null;
   session.sshOuterCellId = null;
   session.sshPromptSalt = null;
   session.sshState = 'idle';
+}
+
+// Ask the remote shell to complete `input`. Returns a Promise<{candidates,
+// currentToken}>. Times out after timeoutMs and resolves with an empty
+// candidate list rather than throwing — Tab should never throw at the user.
+//
+// The mechanism: write `\x15__tb_complete '<reqId>' '<prefix>'\r` to the
+// PTY. The injected __tb_complete function emits salted TBCMP markers.
+// onData detects + strips them; we resolve here.
+//
+// Concurrency: a per-session counter generates reqIds, so multiple in-flight
+// Tabs (rare but possible) don't confuse each other.
+const REMOTE_COMPLETION_TIMEOUT_MS = 600;
+function requestRemoteCompletion(session, input, timeoutMs = REMOTE_COMPLETION_TIMEOUT_MS) {
+    return new Promise((resolve) => {
+        // Split input into pre + currentToken on the LAST space (mirrors
+        // local completion semantics). Token may be empty (e.g. user typed
+        // "ls " + Tab to list cwd).
+        const lastSpace = input.lastIndexOf(' ');
+        const currentToken = lastSpace >= 0 ? input.slice(lastSpace + 1) : input;
+        if (!session.pendingCompletions) session.pendingCompletions = [];
+        session.sshCompletionReqCounter = (session.sshCompletionReqCounter || 0) + 1;
+        const reqId = `rc${session.sshCompletionReqCounter}`;
+        let settled = false;
+        const settle = (result) => { if (!settled) { settled = true; resolve(result); } };
+        const pc = {
+            reqId,
+            resolve: (r) => settle({ candidates: r.candidates, currentToken }),
+            reject: () => settle({ candidates: [], currentToken }),
+        };
+        session.pendingCompletions.push(pc);
+        try {
+            session.ptyProcess.write(sshMod.buildRemoteCompletionRequest(reqId, currentToken));
+        } catch (e) {
+            session.pendingCompletions = session.pendingCompletions.filter(p => p !== pc);
+            settle({ candidates: [], currentToken });
+            return;
+        }
+        setTimeout(() => {
+            if (!settled) {
+                // Remove from queue (the response may still arrive late;
+                // onData will just find no matching pending entry and
+                // forward the bytes — acceptable harmless cosmetic).
+                session.pendingCompletions = session.pendingCompletions.filter(p => p !== pc);
+                settle({ candidates: [], currentToken });
+            }
+        }, timeoutMs);
+    });
 }
 
 function performSshInjection(session) {
@@ -442,6 +499,44 @@ function attachPtyHandlers(session) {
               }, 50);
           }
           return;
+      }
+
+      // ── SSH Path B: remote completion RPC response handling ──
+      // If a TBCMP/TBCMPEND pair appears in the incoming chunk (or across
+      // chunks), extract candidates and STRIP the entire request+response
+      // range from the chunk so they don't leak into tailBuf, the headless
+      // terminal, or the broadcast stream. The TBCMP markers carry the
+      // per-SSH salt + the request's reqId so we ignore unrelated ones.
+      if (session.sshActive && session.pendingCompletions && session.pendingCompletions.length > 0) {
+          // Combine any unfinished leftover from a previous chunk + this chunk.
+          let merged = (session.completionLeftover || '') + dataStr;
+          let changed = true;
+          while (changed) {
+              changed = false;
+              for (let i = 0; i < session.pendingCompletions.length; i++) {
+                  const pc = session.pendingCompletions[i];
+                  const found = sshMod.parseRemoteCompletionResponse(merged, pc.reqId, session.sshPromptSalt);
+                  if (found) {
+                      // Strip the range from merged.
+                      merged = merged.slice(0, found.rangeStart) + merged.slice(found.rangeEnd);
+                      pc.resolve({ candidates: found.candidates, count: found.count });
+                      session.pendingCompletions.splice(i, 1);
+                      changed = true;
+                      break;
+                  }
+              }
+          }
+          // If a TBCMP start marker is still present without END, this chunk
+          // is partial — buffer the whole thing for next time. Otherwise
+          // emit merged as the new dataStr.
+          if (merged.includes('\x1b]1339;TBCMP;')) {
+              // Save up to 16KB tail to avoid unbounded growth on truly stuck responses.
+              session.completionLeftover = merged.length < 16384 ? merged : merged.slice(-16384);
+              dataStr = '';
+          } else {
+              session.completionLeftover = '';
+              dataStr = merged;
+          }
       }
 
       session.tailBuf += dataStr;
@@ -787,18 +882,35 @@ app.delete('/api/sessions/:id', (req, res) => {
   else res.status(404).json({ error: 'Not found' });
 });
 
-app.get('/api/complete', (req, res) => {
+app.get('/api/complete', async (req, res) => {
     const input = String(req.query.input || '');
     const sessionId = String(req.query.sessionId || '');
     const s = sessions.get(sessionId);
     const cwd = (s && s.pwd) || process.cwd();
     try {
+        // When inside an active Path B SSH session, completion MUST hit the
+        // REMOTE filesystem (the local /api/complete would otherwise resolve
+        // paths against the local fs, which is wrong on real remote hosts).
+        // The integration's __tb_complete function does the work over the
+        // existing PTY using a salted RPC.
+        if (s && s.sshActive && s.sshState === 'active') {
+            const remote = await requestRemoteCompletion(s, input);
+            // Map remote candidate strings to the {value, isDir, type} shape
+            // local completion uses, so frontend doesn't need a special path.
+            const candidates = remote.candidates.map(raw => {
+                const isDir = raw.endsWith('/');
+                const value = isDir ? raw.slice(0, -1) : raw;
+                return { value, isDir, type: 'file' };
+            });
+            return res.json({ input, cwd, currentToken: remote.currentToken, candidates, source: 'remote' });
+        }
         const result = completion.complete(input, cwd, USER_ALIASES);
         res.json({
             input,
             cwd,
             currentToken: result.currentToken,
             candidates: result.candidates,
+            source: 'local',
         });
     } catch (e) {
         res.status(500).json({ error: e.message });
