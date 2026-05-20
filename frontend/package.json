@@ -11,7 +11,11 @@
     "test:visual": "playwright test --config playwright.visual.config.js",
     "test:visual:ci": "TERMBOOK_CI=1 playwright test --config playwright.visual.config.js",
     "test:motion": "playwright test --config playwright.visual.config.js tests/visual/motion.spec.mjs",
-    "test:regression": "playwright test --config playwright.visual.config.js tests/visual/regression.spec.mjs"
+    "test:regression": "playwright test --config playwright.visual.config.js tests/visual/regression.spec.mjs",
+    "test:e2e": "playwright test --config playwright.e2e.config.js",
+    "test:e2e:update": "playwright test --config playwright.e2e.config.js --update-snapshots=all",
+    "test:e2e:headed": "playwright test --config playwright.e2e.config.js --headed",
+    "test:all": "npm run test:visual && npm run test:e2e"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
