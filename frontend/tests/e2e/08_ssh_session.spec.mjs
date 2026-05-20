@@ -354,4 +354,55 @@ test.describe('SSH session — Path B by default', () => {
         await inp.fill('');
         await runRemote(page, 'rm -f /tmp/__tb_e2e_tab_a /tmp/__tb_e2e_tab_b /tmp/__tb_e2e_tab_c');
     });
+
+    test('L: Ctrl+D at empty chat input ends the SSH session (EOF to remote bash)', async ({ page }, testInfo) => {
+        await gotoFreshSession(page);
+        await loginSsh(page);
+        await runRemote(page, 'echo PRE_EOF_OK');
+
+        // Empty input, Ctrl+D — should send \x04 to remote PTY → remote bash exits.
+        const inp = page.locator('.chat-input-wrapper textarea').first();
+        await inp.focus();
+        await inp.fill('');
+        await page.keyboard.down('Control');
+        await page.keyboard.press('KeyD');
+        await page.keyboard.up('Control');
+        // Wait for ssh process to actually exit (remote bash EOF → ssh ends).
+        await waitForIdle(page, 10000);
+        await shot(page, testInfo, '01_after_ctrl_d');
+
+        // Verify SSH is no longer active by running a command and checking
+        // it does NOT get the SSH chip.
+        await runCommand(page, 'echo POST_SSH');
+        const c = await inspectCells(page);
+        const last = c[c.length - 1];
+        expect(last.cmd).toBe('echo POST_SSH');
+        expect(last.sshChip).toBeNull();
+    });
+
+    test('M: Ctrl+C with content clears chat input AND forwards ^C to remote', async ({ page }, testInfo) => {
+        await gotoFreshSession(page);
+        await loginSsh(page);
+
+        // Type something in chat input, then Ctrl+C
+        const inp = page.locator('.chat-input-wrapper textarea').first();
+        await inp.focus();
+        await inp.fill('partial command being abandoned');
+        await page.keyboard.down('Control');
+        await page.keyboard.press('KeyC');
+        await page.keyboard.up('Control');
+        await page.waitForTimeout(400);
+
+        // Chat input is cleared.
+        const after = await page.evaluate(() => document.querySelector('.chat-input-wrapper textarea')?.value);
+        expect(after).toBe('');
+
+        // SSH is still active — verified by running another remote command.
+        await runRemote(page, 'echo STILL_REMOTE');
+        await shot(page, testInfo, '01_after_ctrl_c');
+        const c = await inspectCells(page);
+        const last = c[c.length - 1];
+        expect(last.sshChip).toBeTruthy();
+        expect(last.output).toContain('STILL_REMOTE');
+    });
 });

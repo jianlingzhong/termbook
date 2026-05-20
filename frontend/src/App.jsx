@@ -49,6 +49,12 @@ function App() {
   const [sessionSockets, setSessionSockets] = useState({});
   const [sessionTuiStates, setSessionTuiStates] = useState({});
   const [sessionRunning, setSessionRunning] = useState({});
+  // Per-session SSH Path B activation state. When true, the chat input
+  // forwards control keys (Ctrl+C/D/L) to the remote PTY when no cell is
+  // currently running — matching the experience of being inside a real
+  // remote terminal. Updated via session_init.sshActive and 'ssh_state'
+  // WS messages from the backend.
+  const [sessionSshActive, setSessionSshActive] = useState({});
   const [inputValue, setInputValue] = useState('');
   
   const sessionRunningRef = useRef({});
@@ -394,6 +400,7 @@ function App() {
     });
     setSessionRunning(prev => { const n = { ...prev }; delete n[sessionId]; return n; });
     setSessionTuiStates(prev => { const n = { ...prev }; delete n[sessionId]; return n; });
+    setSessionSshActive(prev => { const n = { ...prev }; delete n[sessionId]; return n; });
     if (activeSessionId === sessionId) {
         setActiveSessionId(prevId => {
             const remaining = sessions.filter(s => s.id !== sessionId);
@@ -483,6 +490,13 @@ function App() {
                     setSessionRunning(prev => ({ ...prev, [sessionId]: msg.cells.some(c => c.isRunning) }));
                 }
                 if (msg.isTuiActive) setSessionTuiStates(prev => ({ ...prev, [sessionId]: { cellId: msg.activeCellId ?? msg.cellId } }));
+                // SSH Path B state on reconnect / fresh join.
+                setSessionSshActive(prev => ({ ...prev, [sessionId]: !!msg.sshActive }));
+            } else if (msg.type === 'ssh_state') {
+                // Backend transitions: SSH session became active (after
+                // injection) or ended (user typed `exit`). Drives whether
+                // control keys forward to remote when chat input is idle.
+                setSessionSshActive(prev => ({ ...prev, [sessionId]: !!msg.sshActive }));
             } else if (msg.type === 'new_cell') {
                 const newCellId = msg.cellId || `cell-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
                 setSessionCells(prev => {
@@ -661,6 +675,37 @@ function App() {
       return;
     }
     if (e.key !== 'Tab' && completionState) setCompletionState(null);
+    // ── SSH Path B: control-key forwarding when idle in remote session ──
+    // In a real terminal, Ctrl+D at an empty prompt EOFs the shell. In
+    // Path B between remote commands, the chat input is idle but the SSH
+    // PTY is alive. Send Ctrl+D as \x04 to the remote bash so `exit`-by-
+    // EOF works the way users expect.
+    //
+    // Ctrl+C with content: we keep the local "clear input" behavior
+    // (textarea's default), but also send \x03 to the remote so any
+    // partial line on the remote shell's line editor is also cleared.
+    // Ctrl+L: kept local (clear notebook history) — forwarding to remote
+    // would just redraw the prompt with no benefit.
+    if (sessionSshActive[activeSessionId] && e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) {
+      const ws = sessionSockets[activeSessionId];
+      if (ws && ws.readyState === 1) {
+        if (e.key === 'd' || e.key === 'D') {
+          // Only EOF when input is empty (otherwise Ctrl+D is "delete-char-or-EOF" in bash).
+          if (!inputValue) {
+            e.preventDefault();
+            ws.send(JSON.stringify({ type: 'input', data: '\x04' }));
+            return;
+          }
+        } else if (e.key === 'c' || e.key === 'C') {
+          // Forward ^C to the remote line editor so any partial line
+          // there is cleared too. Also clear chat input.
+          e.preventDefault();
+          ws.send(JSON.stringify({ type: 'input', data: '\x03' }));
+          setInputValue('');
+          return;
+        }
+      }
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
       e.preventDefault();
       setPaletteOpen(true);
