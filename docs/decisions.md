@@ -65,24 +65,39 @@ launching the user's actual shell.
 
 ---
 
-### Salted prompt marker + unsalted fallback
+### Salted prompt marker + conditional unsalted fallback {#salted-marker}
 
 **Decision**: `PROMPT_COMMAND` emits `\033]133;D;<exitCode>;<promptSalt>\007`.
-Parser tries to match the **salted** version first; on failure, falls
-back to any `\033]133;D;<n>\007`.
+Parser accepts an array of salts (currently `[localSalt, sshSalt]` after
+the SSH Path B feature landed). The `allowUnsalted` opt-in flag controls
+whether bare `\033]133;D;<n>\007` markers also close cells.
 
-**Why salt**: without it, a malicious or careless command could spoof
-the marker via stdout and prematurely close its own cell. E.g.
-`echo -e "\x1b]133;D;0\x07"` would falsely terminate.
+**Today's policy** (`backend/server.js`):
 
-**Why fallback to unsalted**: many shell-integration setups (iTerm2,
-oh-my-zsh, p10k, the `foot` plugin) emit OSC 133;D **without** our salt.
-If we required the salt, every command in a heavy zsh env would hang.
+| Context | `allowUnsalted` | What closes a cell |
+|---|---|---|
+| Normal local cell | `true` | localSalt, or unsalted (legacy) |
+| Active SSH cell (Path B) | `false` | localSalt or sshSalt only — NO unsalted |
+| Bootstrap (pre-`isPtyReady`) | `true` | Used just to learn initial pwd |
 
-The fallback is a small security regression we accept for compatibility.
-The salt still helps in pure-bash setups.
+**Why salt**: without it, a malicious or careless command could spoof the
+marker via stdout and prematurely close its own cell. E.g.
+`echo -e "\x1b]133;D;0\x07"` would falsely terminate. This is the exact
+shell-injection vector called out in
+[`docs/architecture_critique.md:230`](architecture_critique.md).
 
-See `backend/parser.js:1-30`.
+**Why still allow unsalted in local mode**: many shell-integration setups
+(iTerm2, oh-my-zsh, p10k, the `foot` plugin) emit OSC 133;D **without**
+our salt. Termbook currently leans on this so per-command cell boundaries
+work even before users explicitly do anything SSH-related. (Strict opt-in
+to "salt only" everywhere is a future hardening.)
+
+**Why forbidden during SSH**: see [#ssh-path-b](#ssh-path-b) below. A
+remote shell with its own p10k integration would otherwise close the SSH
+cell prematurely the moment it printed its first prompt.
+
+See `backend/parser.js` (lines 27-43) and call sites at
+`backend/server.js:483`.
 
 ---
 
@@ -894,3 +909,106 @@ Use `queryLastCell()` (querySelectorAll + index).
 19 e2e tests cover this matrix in
 `frontend/tests/e2e/07_scroll_behavior.spec.mjs`. If you change anything
 about scroll behavior, run them and update them.
+
+---
+
+## SSH integration ("Path B by default")
+
+### Auto-injected remote shell integration {#ssh-path-b}
+
+**Decision**: when the user runs an interactive `ssh user@host`, Termbook
+silently injects a salted shell-integration snippet into the remote shell
+once its prompt is visible. From that point each remote command becomes
+its own Termbook cell with the **real remote pwd, git branch, and exit
+code** in the chips.
+
+The injected snippet (built by `backend/ssh.js:buildRemoteIntegration`)
+installs `__tb_remote_prompt()` as the remote shell's `PROMPT_COMMAND`
+(bash) and/or `precmd_functions` (zsh). The function emits:
+
+- `OSC 133;D;<exit>;<sshSalt>` — finish marker with remote exit code
+- `OSC 7;file://<remote-host>/<pwd>` — remote pwd
+- `OSC 1338;TBENV;branch=<>;venv=<>;conda=<>;host=<>` — env chips
+
+The `sshSalt` is a per-SSH-session UUID, distinct from the local bash
+salt. The parser is given `[localSalt, sshSalt]` and returns a `which`
+field naming which salt matched — that's how the backend knows whether
+a finish marker came from the LOCAL bash (outer ssh process exiting)
+or the REMOTE bash (a remote command finished).
+
+**State machine** (see `backend/server.js` SSH helpers section, ~line 297):
+
+```
+  idle ──[user submits `ssh host`]──> pending
+  pending ──[remote prompt + 600ms idle]──> injecting
+  injecting ──[salted marker arrives]──> active
+  active ──[which='ssh' finish]──> next remote cell
+  active ──[which='local' finish]──> idle (ssh process exited)
+```
+
+If injection doesn't yield a salted marker within 8 s, `sshState='failed'`
+and Termbook degrades silently to the pre-feature behavior (one big SSH
+cell with passthrough; cells may be unsalted-marker-driven from remote's
+own integration).
+
+**Per-invocation opt-out**: `ssh --no-termbook user@host` (or `--no-tb`)
+skips injection entirely. Useful when injecting would break the workflow
+(e.g. piping ssh stdin, restricted shells, or just preferring a vanilla
+remote terminal).
+
+**Single-shot ssh is left alone**: `ssh host 'echo hi'` has no interactive
+remote shell to inject into. `parseSshCommand` flags this as
+`isSingleShot=true` and Termbook treats the cell as any other one-shot.
+
+**Nested ssh**: only the OUTERMOST ssh gets Path B integration. An inner
+`ssh host2` from inside the outer remote shell runs as a normal remote
+command from Termbook's POV. This keeps the implementation simple and
+avoids fighting recursive shell-integration semantics.
+
+**Security**: the per-SSH salt is plaintext inside the remote shell's
+environment, so any process running on the remote with read access to
+the running shell's PROMPT_COMMAND can in principle spoof markers — same
+security model as the local salt. Acceptable for the use cases this app
+targets (your own machines / dev hosts), but documented in
+[`docs/known-issues.md`](known-issues.md).
+
+**Tested by** `frontend/tests/e2e/08_ssh_session.spec.mjs` (10 tests
+covering happy path, remote pwd/git/exit, vim TUI over SSH, --no-termbook
+opt-out, single-shot pass-through, nested, and a regression test that
+asserts unsalted markers from remote do NOT close Path B cells).
+
+See:
+- `backend/parser.js` — dual-salt parser with `which` field
+- `backend/ssh.js` — command parser, integration builder, prompt detector
+- `backend/server.js` — state machine + cell tagging (~lines 297-470)
+- `frontend/src/NotebookCell.jsx` — orange SSH chip + session placeholder
+- `frontend/src/index.css` — `.cell-env-chip-ssh` styling
+
+**Don't** call `parseOutput` without explicitly passing the salt array —
+the back-compat string form still works but loses the `which` field that
+the SSH state machine depends on.
+
+**Don't** re-introduce the implicit unsalted fallback during `sshActive`.
+That defeats the salt's purpose and reopens the spoofing hole.
+
+---
+
+### Why Path B by default (not Path A) {#ssh-path-b-rationale}
+
+**Was considered**: Path A (one SSH = one big cell with full passthrough,
+no remote cells). Safe, simple, predictable. The earlier "leaky Path B"
+(remote shells with their own OSC 133 markers accidentally driving cell
+boundaries with WRONG chip data) was the worst of both worlds.
+
+**Why Path B won**: each remote command being a proper cell with real
+remote pwd / git / exit code is dramatically more useful in everyday
+notebook workflows — you can copy commands, re-run them, see exit codes,
+search history by remote command, etc. The injection is reliable enough
+for bash/zsh (the vast majority of remote shells in practice). When it
+fails, we degrade to Path A automatically — no worse than where we
+started.
+
+**Why per-cell, not per-host configuration**: simpler. `--no-termbook` on
+the command line is one decision point, immediately visible in the
+history. A global "blocklist of hosts" would be another piece of state
+that diverges between users + machines.

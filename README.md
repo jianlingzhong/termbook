@@ -13,7 +13,12 @@ Self-hosted, localhost-only. Open-source.
 - Every command you type creates a notebook cell. The cell shows the command,
   its output, exit code, duration, and a colored status icon.
 - Cells carry env-awareness chips: git branch (purple), Python venv (yellow),
-  conda env (green).
+  conda env (green), and remote SSH host (orange).
+- **SSH-aware:** type `ssh user@host` and Termbook automatically injects a
+  salted shell-integration into the remote shell. From that point each
+  REMOTE command becomes its own Termbook cell with the real remote pwd,
+  git branch, and exit code. Append `--no-termbook` to opt out per-command
+  and get a plain passthrough terminal.
 - TUIs (vim, top, htop) — anything that uses the alt-screen buffer — open in
   a full-screen modal that resizes the underlying PTY to fill the modal.
 - Interactive commands (gemini-cli, claude-cli, `cat`, `read`, Python REPL) run
@@ -80,8 +85,10 @@ There are two test tiers:
 cd frontend
 
 npm run test:visual         # 40 functional + motion regression tests (~3 min)
-npm run test:e2e            # 40 end-to-end human-workflow tests with
-                            # screenshots + screencasts + pixel goldens (~5 min)
+npm run test:e2e            # 50 end-to-end human-workflow tests with
+                            # screenshots + screencasts + pixel goldens
+                            # (includes 10 SSH tests that spin up a
+                            # userspace sshd on 127.0.0.1:2222) (~6 min)
 npm run test:all            # both, in sequence
 npm run test:e2e:update     # regenerate golden screenshots
 npm run test:e2e:headed     # watch the browser drive itself
