@@ -369,19 +369,6 @@ function attachPtyHandlers(session) {
               const hideCursor = dataStr.includes('\x1b[?25l');
               cellRef._ansiScore = (cellRef._ansiScore || 0) + cursorMoves + clearOps * 2 + (hideCursor ? 5 : 0);
               if (cellRef._ansiScore > 40) cellRef.inlineTuiLike = true;
-              // Inline TUI promotion: some interactive CLIs (gemini, ink-based
-              // apps) render full-screen prompts WITHOUT entering the
-              // alt-screen buffer (1049h), so our normal TUI detection misses
-              // them. If the ANSI activity score crosses a threshold, treat
-              // the cell as a TUI: open the modal, route user input to the
-              // PTY, and stop trying to parse the inline OSC 133 marker
-              // (which won't arrive until the inline app exits).
-              if (!session.isTuiActive && cellRef._ansiScore > 60) {
-                  debugLog(`[INLINE_TUI_PROMOTE] session ${sessionId} cellId=${cellRef.id} score=${cellRef._ansiScore}`);
-                  session.isTuiActive = true;
-                  cellRef.usedTui = true;
-                  for (const ws of session.clients) ws.send(JSON.stringify({ type: 'tui_enter', cellId: session.activeCellId, inline: true }));
-              }
           }
       }
 
@@ -502,7 +489,12 @@ function startCommand(session, cellId, commandData) {
         for (const ws of session.clients) if (ws.readyState === 1) ws.send(outputMsg);
         session.tailBuf = ""; session.sentPos = 0;
     } else { session.tailBuf = ""; session.sentPos = 0; }
-    session.ptyProcess.write(commandData + '\r\n');
+    // Send '\r' only (not '\r\n'). The TTY line discipline maps '\r' to '\n'
+    // when ICRNL is set (default), which is what bash needs to execute the
+    // line. Sending '\r\n' leaves a stray '\n' in the input queue that a
+    // subsequent `read` (or anything reading stdin) would consume as an
+    // empty line.
+    session.ptyProcess.write(commandData + '\r');
 }
 
 wss.on('connection', (ws, req) => {
