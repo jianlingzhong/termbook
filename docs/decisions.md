@@ -519,3 +519,341 @@ flash` test was developed by:
 4. Running it (failed — good, the test actually catches the bug).
 5. Restoring the fix.
 6. Running it (passed — fix verified).
+
+---
+
+## Persistence
+
+### SQLite, not in-memory only {#persistence}
+
+**Was**: sessions and cells lived in a JS `Map<sessionId, session>`,
+in-memory only. Backend restart wiped every cell.
+
+**Now**: `backend/persistence.js` (better-sqlite3) persists sessions +
+finished cells to `termbook.db` at the repo root.
+
+Schema:
+```
+sessions(id, pwd, created_at, last_activity)
+cells(id, session_id, command, snapshot_ansi, snapshot_cols,
+      snapshot_rows, exit_code, pwd, executable_pwd, used_tui,
+      started_at, finished_at, position, git_branch, virtual_env,
+      conda_env)
+```
+
+Lifecycle:
+- **Startup**: load all sessions + cells into in-memory Map with
+  `ptyProcess: null`.
+- **join_session for hydrated session**: lazily spawn a fresh PTY in
+  the session's last-known `pwd`.
+- **cell create**: upsertCell at position.
+- **cell close**: upsertCell with snapshot + exit code + finished_at +
+  env fields.
+- **pwd change**: upsertSession with new pwd.
+- **session destroy**: cascades to cells.
+
+What's NOT persisted: in-flight commands (cells marked non-running on
+hydration), live PTY env vars / shell functions / subprocess state.
+
+DB path overridable via `TERMBOOK_DB_PATH=`. Reset with
+`node backend/server.js --reset-db` or `rm termbook.db*`.
+
+Migration: new columns are added via idempotent `ALTER TABLE ... ADD
+COLUMN` in `openDb()` after a `PRAGMA table_info` check. No external
+migration tool.
+
+See `backend/persistence.js`, `backend/server.js` `spawnPtyForSession`
+and `attachPtyHandlers`.
+
+---
+
+## Tab completion
+
+### Heuristic-free completion {#completion}
+
+**Decision**: `backend/completion.js` exposes a stateless `complete(input, cwd, aliases)`
+function. The frontend calls `GET /api/complete?input=...&sessionId=...`
+on Tab keypress.
+
+Two modes, chosen by token position:
+- **First token**: union of bash builtins + user aliases + executables
+  on `$PATH` (cached 30s).
+- **Later tokens**: filesystem listing of `dirname(token)` in the
+  session's `pwd`, with `~`-expansion. Dirs sorted first, suffixed `/`.
+  Hidden files only when token starts with `.`.
+
+On Tab: 1 candidate → accept (append space for files). N candidates →
+replace input with first, store list in `completionState`; next Tab
+cycles. Any non-Tab keypress clears the cycle state.
+
+See `backend/completion.js`, `App.jsx` `handleCommand` Tab branch.
+
+---
+
+## Ctrl+R history search
+
+### Frontend-only, simple fuzzy scoring {#history-search}
+
+**Decision**: bash-style reverse-i-search modal. Data source is the
+frontend `history` state (last 500 commands, deduped by recency, kept
+in `localStorage` as `termbook_history`).
+
+Scoring (`App.jsx` `fuzzyScore`):
+- exact match → 10000
+- startsWith(query) → 5000 - text.length
+- word-boundary match → 2000 - indexOf
+- substring match → 1000 - indexOf
+- otherwise: each query char appears in order (with adjacent-char bonus)
+
+The ordering matters — without word-boundary > substring, "history"
+would pull "Clear history" (where "history" appears at index 6) over
+"Search command history" (where it appears at index 15).
+
+No external library. ~20 LOC.
+
+---
+
+## Cmd+K action palette
+
+### Reuses history-search overlay; static action array {#palette}
+
+**Decision**: Cmd+K opens a fuzzy-searchable list of in-app actions.
+Reuses `.history-search-overlay` CSS for visual consistency, with
+`.palette-modal` for label+hint two-column layout.
+
+Actions are a static array of `{ id, label, hint, run }` defined in
+`App.jsx`. Filtering uses the same `fuzzyScore()` from history search.
+
+**Don't**: bind Cmd+K AND Cmd+Shift+F in BOTH the window-level keydown
+listener AND the input's `handleCommand`. The events fire on both
+(preventDefault doesn't stop propagation), so the handler runs twice.
+For idempotent actions (setPaletteOpen(true), setHistorySearch({}))
+this is harmless. For TOGGLES (toggleMaximized), the double-call cancels
+itself out — net zero state change. Cmd+Shift+F is therefore bound ONLY
+at the window level.
+
+---
+
+## Full-screen workspace mode
+
+### Cmd+Shift+F toggles sidebar + header visibility {#fullscreen}
+
+**Decision**: Cmd+Shift+F (or Ctrl+Shift+F, or the maximize icon in
+the top header) toggles `.app-container.is-maximized`. The CSS rule
+`.is-maximized .sidebar, .is-maximized .top-header { display: none }`
+hides the chrome. A floating exit-fullscreen-floating button at
+top-right (opacity 0.35 idle, 1.0 on hover) is the safety hatch.
+
+Why Cmd+Shift+F (not Cmd+F): Cmd+F is browser find. Cmd+Ctrl+F is
+macOS browser fullscreen. Cmd+Shift+F is unused. Free real estate.
+
+Preference persists as `localStorage.termbook_maximized = '1' | '0'`.
+
+PTY width updates automatically: per-cell `ResizeObserver` re-emits
+resize when the layout shifts.
+
+See `App.jsx` `isMaximized` state and `toggleMaximized` + `.is-maximized`
+CSS in `index.css`.
+
+---
+
+## Desktop notifications
+
+### Long-running, unfocused-tab only {#notifications}
+
+**Decision**: when a command takes >5s (`NOTIFY_THRESHOLD_MS`) AND the
+tab is not focused, fire a `new Notification(...)`. The threshold +
+focus check together ensure we only notify when the user actually needs
+the alert — short commands don't ping you, and if you're already
+watching the cell finish, you don't need a desktop pop.
+
+Permission flow: granted → fire; default → request, then fire if
+accepted; denied → silently skip.
+
+`tag: 'termbook-cmd'` replaces stale notifications so multiple finishing
+commands don't pile up.
+
+See `App.jsx` `maybeNotifyCommandFinished`.
+
+---
+
+## Environment awareness (git / venv / conda chips)
+
+### OSC 1338 TBENV marker for shell-only env vars {#env-awareness}
+
+**Was**: cells had no awareness of git branch, Python venv, or conda
+env. Every modern terminal prompt shows these — Termbook felt blind.
+
+**Now**: each finished cell shows up to three chips:
+- Purple `⎇ main` — git branch (or `(<short-sha>)` for detached HEAD)
+- Yellow `📦 myenv` — Python venv basename
+- Green `myenv` — conda env name (skipped if `base`)
+
+Git branch is detected backend-side via `git rev-parse --abbrev-ref HEAD`
+in the cell's `pwd`, with a 5-second cache in `backend/env_detect.js`.
+Cheap and synchronous.
+
+Venv and conda env are different — they live inside the PTY shell, not
+the parent process. We can't read them from `process.env`. To surface
+them, we added a custom OSC marker to `PROMPT_COMMAND`:
+
+```
+\033]1338;TBENV;venv=myenv;conda=other\007
+```
+
+Critical ordering: this marker is emitted BEFORE the OSC 133;D finish
+marker. `parseOutput` slices the tailBuf as soon as it sees 133;D, so
+an env marker arriving in a later chunk would be discarded. Emit env
+first, finish marker second.
+
+**Don't**: use `$(basename "$VIRTUAL_ENV")` inside the single-quoted
+PROMPT_COMMAND. Escaping `\"` inside the basename call inside the
+single-quoted command produces trailing-quote artifacts on macOS bash 3.
+Use bash parameter expansion `${VIRTUAL_ENV##*/}` instead.
+
+Also: export `VIRTUAL_ENV_DISABLE_PROMPT=1` and `CONDA_CHANGEPS1=false`
+so the activate scripts don't mutate PS1 and leak `(venv) ` prefix into
+cell snapshots.
+
+See `backend/server.js` `buildBashRc` (the env marker construction),
+`backend/parser.js` (env regex), `backend/env_detect.js` (git detection),
+`backend/persistence.js` (schema migration).
+
+---
+
+## Inline interactive commands
+
+### Passthrough mode, no detection {#passthrough}
+
+**Was**: I tried two wrong approaches:
+1. Disable the chat input whenever a command was running. Users had no
+   way to type into gemini-cli, cat, read, python REPL, etc.
+2. Add heuristic detection ("count cursor moves; if >60, open the TUI
+   modal"). The modal was the wrong container for inline TUIs — gemini
+   deliberately doesn't use alt-screen, and putting it in a modal felt
+   like vim taking over the screen.
+
+**Now**: NO detection. **Whenever a command is running and the TUI
+modal isn't open, the chat input enters passthrough mode** (`isPassthrough
+= sessionRunning[id] && !activeTuiState`). Every keystroke is forwarded
+to the running command's PTY as raw bytes:
+
+```
+printable char  → as-is
+Enter           → '\r'
+Backspace       → '\x7f'
+Tab             → '\t'
+Escape          → '\x1b'
+ArrowUp/Down/L/R → '\x1b[A' / '\x1b[B' / '\x1b[D' / '\x1b[C'
+Ctrl+letter     → '\x01' .. '\x1a'
+```
+
+Cmd+K, Ctrl+R, Cmd+Shift+F still work in passthrough (bypassed at the
+top of `handleCommand`).
+
+Visual: `.chat-input-wrapper.is-passthrough` (cyan ring), placeholder
+`Sending keystrokes to running command…`.
+
+**Don't** re-add an "inline TUI heuristic" that promotes inline-rendered
+commands to a modal. Users were explicit about this — gemini, claude-cli,
+ink-based CLIs should stay inline.
+
+See `App.jsx` `handleCommand` passthrough branch (~line 490).
+
+---
+
+## Backend env stripping
+
+### Strip CI=true and friends from PTY child env {#ci-strip}
+
+**Symptom**: `gemini` (Google internal CLI) exited with `Exit 42` and
+"No input provided via stdin" when run from Termbook.
+
+**Cause**: gemini-cli (and many modern tools — Ink-based CLIs, chalk,
+npm) check `process.env.CI` and switch to non-interactive "headless"
+mode when it's set. If the user launched the backend from a shell that
+had `CI=true` exported (a common dev workflow footgun), it propagated
+all the way through to the PTY children.
+
+**Fix**: `spawnPtyForSession` strips a known list of CI-detection vars
+from the env it passes to `pty.spawn`:
+
+```js
+['CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'BUILDKITE',
+ 'RUN_ID', 'GITLAB_CI', 'JENKINS_URL', 'NO_COLOR']
+```
+
+Also identifies us as `TERM_PROGRAM=termbook` so apps can opt into
+richer integrations.
+
+See `backend/server.js` `spawnPtyForSession` env block.
+
+---
+
+## `\r` vs `\r\n` to the PTY
+
+### `\r` only — TTY's ICRNL handles the rest {#crlf}
+
+**Was**: `session.ptyProcess.write(commandData + '\r\n')`.
+
+**Symptom**: `read X; echo $X` returned instantly with empty `$X`. `cat`
+(no args) hung "forever" because Ctrl+D wasn't being respected... no,
+actually `cat` hung because we sent `\r\n` after the command and an
+extra `\n` was left in the input queue. The next program reading stdin
+consumed it as an empty line.
+
+**Now**: `session.ptyProcess.write(commandData + '\r')`. The TTY line
+discipline (ICRNL on by default) maps `\r → \n` when bash needs to
+execute. Sending `\r\n` leaves a stray `\n` in the queue.
+
+This fix also resolved the documented "`cat` (no args) hangs forever"
+known issue — it now works (type lines, Ctrl+D exits).
+
+See `backend/server.js` `startCommand`.
+
+---
+
+## Scroll behavior
+
+### Latest-cell-at-top on submit AND on session switch (with memo) {#scroll}
+
+**Was**: session switch scrolled to `scrollHeight` (very bottom of the
+notebook). Latest cell was pushed up off-screen. User had to scroll
+manually to see what they last ran.
+
+**Now**: unified contract:
+1. After submit, latest cell sits at the top of the viewport.
+2. On session switch, by default the same — latest at top.
+3. EXCEPT: if the user had explicitly scrolled the source session
+   before switching away, restore that scroll position on return.
+
+Implementation in `App.jsx`:
+
+- `sessionScrollMemoRef = { [sessionId]: { scrollTop, userScrolled } }`.
+- A scroll event counts as user-initiated ONLY if a wheel / touchmove /
+  scroll-key event (PageUp/Down, Home, End, Arrow when NOT in a text
+  input) fired within the last 500ms. Generic scroll events (layout
+  shifts, cell renders, fit-addon resizes, session swap DOM churn) do
+  NOT count.
+- Effect order matters: `useEffect(..., [activeSessionId])` is declared
+  BEFORE `useEffect(..., [cells, activeSessionId])`. React runs effects
+  in declaration order. The activeSessionId effect sets up
+  `pendingScrollRef` and resets `lastCellCountRef` BEFORE the cells
+  effect sees the new cells. Otherwise the cells effect's
+  `if (cellCount > prevCount)` branch would misfire on session swap
+  (prevCount was from the prior session) and trigger an unwanted
+  submit-scroll-to-top.
+- The cells effect consumes `pendingScrollRef` across up to 8 rAF
+  retries (cells may not be fully mounted on the first frame).
+- CSS `.notebook-content { overflow-anchor: none }` disables the
+  browser's scroll-anchoring feature, which otherwise nudges scrollTop
+  during layout shifts and fights our explicit restoration.
+
+**Don't** use `querySelector('.notebook-cell:last-of-type')` — the
+notebook renders a sentinel `<div>` after the cells (the 240px bottom
+padding) and `:last-of-type` is tag-based, picking the sentinel.
+Use `queryLastCell()` (querySelectorAll + index).
+
+19 e2e tests cover this matrix in
+`frontend/tests/e2e/07_scroll_behavior.spec.mjs`. If you change anything
+about scroll behavior, run them and update them.

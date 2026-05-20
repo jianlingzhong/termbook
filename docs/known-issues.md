@@ -100,21 +100,6 @@ time TUIs (vim/top), there can be visible lag on very large terminals
 
 ## Bugs we know about but haven't fixed
 
-### "Command running…" forever for non-alt-screen TUIs
-
-If you run `gemini-cli` (or anything that takes over the screen WITHOUT
-using `\x1b[?1049h`), the cell stays in "running" state until you quit.
-No way around this from the backend — there's no protocol signal that
-says "I'm waiting for input vs. still computing".
-
-**Workaround**: just type Ctrl+C / `/quit` when you're done. The cell
-will close normally.
-
-We do detect heavy cursor-positioning usage and mark the cell as
-"inline TUI-like" so the snapshot after exit is a compact placeholder
-instead of a messy half-redrawn snapshot. But the spinner during the
-session can't go away without a protocol signal.
-
 ### opencode-google looks tiny in modal
 
 opencode's TUI centers itself in any terminal size. Our modal gives it
@@ -143,18 +128,6 @@ We could detect mid-cell output that doesn't follow a `start` and route
 it elsewhere, but the implementation is gnarly and the use case is
 edge-y.
 
-### `cat` (no args) hangs the cell forever
-
-`cat` with no args reads from stdin. Termbook's UI has no way to send
-stdin to a running command other than typing into the TUI modal — which
-only opens on alt-screen TUIs, which `cat` doesn't trigger.
-
-**Workaround**: Ctrl+D / Ctrl+C via the modal? No, the modal isn't
-open. You'd have to delete the session.
-
-**Real fix**: support a "send raw input to active cell" path even
-without TUI mode. Not implemented; medium priority.
-
 ### Long-running commands stream nothing for a few seconds
 
 Output is buffered up to ~64KB before being flushed. For commands that
@@ -168,6 +141,38 @@ nothing for a while, then a burst.
 **Not fixed because**: tightening the throttle generates more
 WebSocket traffic per cell and the SIGWINCH-storm prevention work
 became delicate. Not worth touching without a real complaint.
+
+---
+
+## Recently resolved (kept here briefly for context)
+
+### ✅ `cat` (no args) used to hang — now works
+
+Used to be: `cat` blocked forever because there was no way to send
+stdin to a running command from Termbook.
+
+Resolved by passthrough mode (see [decisions.md#passthrough](decisions.md#passthrough)).
+Type lines, press Ctrl+D, cat exits.
+
+### ✅ gemini-cli used to exit immediately with "No input via stdin"
+
+Used to be: gemini-cli detected `CI=true` (inherited from the shell
+that launched the backend) and went into headless mode, then errored
+because there was no piped input.
+
+Resolved by stripping CI-detection env vars from the PTY spawn
+(see [decisions.md#ci-strip](decisions.md#ci-strip)).
+
+### ✅ "Inline TUI" cells used to have no way to interact
+
+Used to be: gemini-cli, claude-cli, ink-based CLIs rendered inline in
+the cell, but the chat input was disabled while the command ran. The
+user could see the prompt but couldn't type into it.
+
+Resolved by passthrough mode (see [decisions.md#passthrough](decisions.md#passthrough)).
+Whenever a non-alt-screen command is running, the chat input forwards
+every keystroke (including Enter, arrows, Ctrl+C/D, etc.) to the
+running command's PTY.
 
 ---
 
