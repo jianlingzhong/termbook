@@ -527,26 +527,82 @@ test.describe('regression', () => {
     });
 
     // Inline TUI promotion: tools like gemini-cli, claude-cli, and other
-    // Ink-based interactive CLIs render full-screen prompts WITHOUT
-    // entering the alt-screen buffer (no OSC 1049h). The backend detects
-    // these via accumulated cursor-move ANSI activity and promotes the
-    // cell to TUI mode so the modal opens and routes input to the PTY.
-    test('inline TUI command (cursor-move-heavy) opens the TUI modal', async ({ page }) => {
+    // When ANY command is running (vim excluded — that opens a modal),
+    // the chat input enters passthrough mode: keystrokes go straight to
+    // the running PTY. This is what lets the user type into gemini, cat,
+    // an interactive python REPL, or any program waiting on stdin —
+    // without any special per-program detection. Tests two real use cases:
+    //   1. `cat` waiting on stdin: type two lines + Ctrl+D to exit.
+    //   2. `read -r` builtin: type a line + Enter.
+    test('chat input forwards keystrokes to a running command (passthrough)', async ({ page }) => {
         await gotoFreshSession(page);
         const inp = await waitInputReady(page);
-        // Spin up a tiny inline-TUI emulator: ~80 cursor moves should cross
-        // the promotion threshold (60).
-        // Each \\x1B[3A;3G moves the cursor; the sleep keeps the process
-        // alive so we can observe the TUI modal in the DOM.
-        await inp.fill('for i in $(seq 1 80); do printf "\\033[1A\\033[3G"; done; sleep 3');
+
+        // bash `read -r` reads one line from stdin, echoes [GOT:...], exits.
+        await inp.fill('read -r LINE; printf "[GOT:%s]\\n" "$LINE"');
         await inp.press('Enter');
-        // Wait for promotion (debounce + modal open).
-        await page.waitForTimeout(2000);
-        const modal = await page.locator('.tui-modal-overlay').count();
-        expect(modal).toBe(1);
-        // Wait for the sleep to finish so the cell closes cleanly and
-        // doesn't leak into the next test.
-        await page.waitForTimeout(3000);
+
+        // Wait for passthrough to be visible — read -r is a builtin that
+        // starts almost immediately, but the WS round trip + React state
+        // update takes a few hundred ms.
+        let s1 = null;
+        for (let i = 0; i < 20; i++) {
+            await page.waitForTimeout(150);
+            s1 = await page.evaluate(() => ({
+                modal: !!document.querySelector('.tui-modal-overlay'),
+                passthrough: !!document.querySelector('.chat-input-wrapper.is-passthrough'),
+                disabled: document.querySelector('.chat-input-wrapper textarea')?.disabled,
+                placeholder: document.querySelector('.chat-input-wrapper textarea')?.placeholder,
+            }));
+            if (s1.passthrough) break;
+        }
+        expect(s1.modal).toBe(false);
+        expect(s1.passthrough).toBe(true);
+        expect(s1.disabled).toBe(false);
+        expect(s1.placeholder).toContain('Sending keystrokes');
+
+        // Type a line + Enter. read picks it up, cell finishes.
+        await page.locator('.chat-input-wrapper textarea').first().focus();
+        await page.keyboard.type('hello');
+        await page.keyboard.press('Enter');
+
+        let exited = false;
+        for (let i = 0; i < 10; i++) {
+            await page.waitForTimeout(500);
+            const r = await page.evaluate(() => ({
+                passthrough: !!document.querySelector('.chat-input-wrapper.is-passthrough'),
+                running: document.querySelectorAll('.notebook-cell.active-cell').length,
+            }));
+            if (!r.passthrough && r.running === 0) { exited = true; break; }
+        }
+        expect(exited).toBe(true);
+        const cellText = await page.locator('.notebook-cell .cell-output').first().innerText();
+        expect(cellText).toContain('[GOT:hello]');
+    });
+
+    test('Ctrl+C through chat input interrupts a running command', async ({ page }) => {
+        await gotoFreshSession(page);
+        const inp = await waitInputReady(page);
+        // Long sleep — we expect Ctrl+C to kill it long before it finishes.
+        await inp.fill('sleep 30');
+        await inp.press('Enter');
+        await page.waitForTimeout(800);
+        expect(await page.evaluate(() => !!document.querySelector('.chat-input-wrapper.is-passthrough'))).toBe(true);
+
+        // Ctrl+C should be sent as \x03 to the PTY and kill `sleep 30`.
+        await page.locator('.chat-input-wrapper textarea').first().focus();
+        await page.keyboard.press('Control+c');
+
+        let exited = false;
+        for (let i = 0; i < 6; i++) {
+            await page.waitForTimeout(500);
+            const r = await page.evaluate(() => ({
+                passthrough: !!document.querySelector('.chat-input-wrapper.is-passthrough'),
+                running: document.querySelectorAll('.notebook-cell.active-cell').length,
+            }));
+            if (!r.passthrough && r.running === 0) { exited = true; break; }
+        }
+        expect(exited).toBe(true);
     });
 
     // Activating a venv must NOT leak the "(venv) " prompt prefix into
