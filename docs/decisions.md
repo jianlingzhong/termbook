@@ -1012,3 +1012,77 @@ started.
 the command line is one decision point, immediately visible in the
 history. A global "blocklist of hosts" would be another piece of state
 that diverges between users + machines.
+
+---
+
+### Remote Tab completion via PTY-RPC {#ssh-tab-completion}
+
+**Decision**: When in an active Path B SSH session, the chat input's Tab
+key routes through the REMOTE shell instead of local `/api/complete`.
+
+**Why**: Local completion runs on the BACKEND's filesystem at
+`session.pwd`. Even though `session.pwd` mirrors the remote pwd via OSC
+7, the LOCAL filesystem rarely has the same paths as the remote — on
+real remote hosts, Tab returns nothing useful. Loopback (127.0.0.1) hid
+this in the e2e setup.
+
+**How** (see `backend/ssh.js:buildRemoteIntegration` for the
+`__tb_complete` function and `backend/server.js:requestRemoteCompletion`
+for the client side):
+
+1. The bootstrap snippet now defines a remote `__tb_complete <reqId>
+   <prefix>` function. Uses shell-agnostic globbing (works in bash + zsh
+   with `setopt no_nomatch`). Output is wrapped in salted
+   `OSC 1339;TBCMP;<reqId>;<salt>;<count>` ... `TBCMPEND;<reqId>;<salt>`
+   markers.
+2. Backend's `/api/complete` checks `session.sshActive`. If active, it
+   calls `requestRemoteCompletion(session, input)` which generates a
+   per-request `reqId`, writes `\x15__tb_complete '<reqId>' '<prefix>'\r`
+   to the PTY (the leading Ctrl+U clears any partial line on the remote
+   line editor), and awaits the salted response with a 600ms timeout.
+3. In `onData`, BEFORE appending to tailBuf, any complete TBCMP/TBCMPEND
+   range is parsed out, candidates resolved to the matching Promise, and
+   the entire marker range is **stripped** from the chunk so it never
+   reaches headlessTerminal or the broadcast stream. Cross-chunk markers
+   are handled by a 16 KB `completionLeftover` buffer.
+4. Per-SSH salt prevents a remote process from spoofing fake completion
+   responses (same threat model as the cell-close salt).
+
+**Tested by** `frontend/tests/e2e/08_ssh_session.spec.mjs` test K (3-way
+cycle + no marker leakage assertion).
+
+**Don't** rely on the local /api/complete fallback when SSH is active —
+that's what caused the original Tab-completion-broken-on-real-remote bug.
+
+**Limitation**: only path-style completion (glob expansion). First-token
+COMMAND completion (`gi<Tab>` → `git`) still falls through to local PATH.
+Future work: have `__tb_complete` dispatch based on token position.
+
+---
+
+### Control-key forwarding from chat input in Path B {#ssh-ctrl-forwarding}
+
+**Decision**: When `sessionSshActive[active] === true` AND not in
+passthrough, the chat input forwards Ctrl+C / Ctrl+D to the remote PTY:
+
+- **Ctrl+D at empty input** → `\x04` to PTY → remote bash EOFs → ssh
+  exits → session cleanly closes. Matches every-terminal-ever muscle
+  memory.
+- **Ctrl+C with any input** → `\x03` to PTY (clears any partial line on
+  the remote shell's line editor) AND clears the chat input locally.
+- **Ctrl+L** → kept LOCAL (clear notebook history). Forwarding to remote
+  would just trigger a prompt redraw with no useful change to the
+  notebook display.
+
+**Plumbing**:
+- Backend's `session_init` includes `sshActive` (bool) so reconnecting
+  clients sync immediately.
+- New `ssh_state` WS message broadcast on the two transitions (active /
+  inactive) so client state stays current without polling.
+
+**Don't** add Ctrl+Z forwarding without implementing SIGTSTP-aware job
+tracking on the remote side — bare `\x1a` would suspend the shell
+without our state machine knowing.
+
+See `frontend/src/App.jsx:handleCommand` (the new Ctrl-key branch after
+the Tab handler) and tests L, M in `08_ssh_session.spec.mjs`.

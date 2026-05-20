@@ -245,6 +245,32 @@ auto-injects a salted shell-integration into the remote shell, so each
 remote command becomes a proper cell with REAL remote pwd / git / exit.
 Unsalted markers are explicitly rejected while in an active SSH session.
 
+### ✅ Tab completion in SSH used to use the LOCAL filesystem
+
+Used to be: even after Path B landed, Tab in the chat input still hit
+local `/api/complete` against `session.pwd`. On loopback (the e2e
+testbed) this looked correct because the filesystem is shared; on a real
+remote host Tab returned no candidates.
+
+Resolved by remote PTY-RPC completion (see
+[decisions.md#ssh-tab-completion](decisions.md#ssh-tab-completion)) —
+the integration's `__tb_complete` function does glob expansion in the
+remote shell; backend reads the salted response and routes it back to
+the frontend transparently.
+
+### ✅ Ctrl+D / Ctrl+C in chat input had no effect during Path B idle
+
+Used to be: between remote commands, the chat input was a normal local
+React textarea. Ctrl+D did nothing (could not exit SSH session by EOF as
+in every real terminal); Ctrl+C cleared the input but did not propagate
+to the remote shell's line editor.
+
+Resolved by control-key forwarding (see
+[decisions.md#ssh-ctrl-forwarding](decisions.md#ssh-ctrl-forwarding)) —
+when `sessionSshActive[id]`, Ctrl+D-on-empty sends `\x04` to the remote
+PTY (EOFs the remote shell → ssh exits); Ctrl+C sends `\x03` (clears any
+partial line on remote) AND clears the chat input locally.
+
 ---
 
 ## Repo hygiene issues (planned cleanup, not yet done)
