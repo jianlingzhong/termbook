@@ -14,6 +14,7 @@ const { parseOutput } = require('./parser');
 const persistence = require('./persistence');
 const completion = require('./completion');
 const envDetect = require('./env_detect');
+const sshMod = require('./ssh');
 
 const configPath = path.join(__dirname, '..', 'app_config.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -72,6 +73,15 @@ for (const p of persisted) {
         headlessTerminal: null,
         serializeAddon: null,
         promptSalt: null,
+        // the SSH integration state. See top of attachPtyHandlers + startCommand for
+        // the state machine. These are runtime-only (never persisted) — a
+        // restored session always starts in non-SSH mode.
+        sshActive: false,
+        sshHost: null,
+        sshOuterCellId: null,
+        sshPromptSalt: null,
+        sshState: 'idle', // 'idle' | 'pending' | 'injecting' | 'active' | 'failed'
+        sshIdleTimer: null,
         createdAt: p.createdAt,
         lastActivity: p.lastActivity,
         hydrated: true,
@@ -285,6 +295,13 @@ function createSession(sessionId) {
     headlessTerminal: null,
     serializeAddon: null,
     promptSalt: null,
+    // the SSH integration state — see attachPtyHandlers / startCommand. Runtime-only.
+    sshActive: false,
+    sshHost: null,
+    sshOuterCellId: null,
+    sshPromptSalt: null,
+    sshState: 'idle',
+    sshIdleTimer: null,
     createdAt: Date.now(),
     lastActivity: Date.now()
   };
@@ -292,6 +309,87 @@ function createSession(sessionId) {
   persistSession(session);
   spawnPtyForSession(session);
   return session;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// the SSH integration helpers
+// ──────────────────────────────────────────────────────────────────────
+//
+// When a cell command starts with `ssh ...` (not a single-shot, not opted
+// out), we treat it as a SSH-integration candidate. The high-level lifecycle:
+//
+//   idle ──[user submits `ssh host`]──> pending
+//   pending ──[remote prompt detected + 600ms idle]──> injecting
+//   injecting ──[we write bootstrap line to PTY]──> active
+//   active ──[parser sees `which='ssh'` finishMatch]──> next remote cell
+//   active ──[parser sees `which='local'` finishMatch]──> idle (ssh exited)
+//
+// In `active` state:
+//   - Each user `start` message creates a NEW remote cell and writes
+//     `cmd + '\r'` to the existing PTY (no new PTY spawn).
+//   - Each `which='ssh'` finishMatch closes the current remote cell with
+//     the REMOTE exit code / pwd / env.
+//
+// The OUTER ssh cell is closed (exit 0, marked usedSshSession=true) at the
+// moment we successfully inject + see the first remote prompt close. After
+// that, the user sees a chain of remote cells each tagged with the SSH
+// chip.
+//
+// If injection never succeeds within INJECT_TIMEOUT_MS, we mark the
+// session `sshState='failed'` and fall back to today's "pre-integration"
+// behavior (cell stays open, unsalted markers may close things).
+
+const SSH_INJECT_IDLE_MS = 600;       // quiet window after prompt before we inject
+const SSH_INJECT_TIMEOUT_MS = 8000;   // give up trying to inject after this many ms
+
+function clearSshState(session) {
+  if (session.sshIdleTimer) { clearTimeout(session.sshIdleTimer); session.sshIdleTimer = null; }
+  session.sshActive = false;
+  session.sshHost = null;
+  session.sshOuterCellId = null;
+  session.sshPromptSalt = null;
+  session.sshState = 'idle';
+}
+
+function performSshInjection(session) {
+  if (session.sshState !== 'injecting') return;
+  const snippet = sshMod.buildRemoteIntegration(session.sshPromptSalt);
+  debugLog(`[SSH_INJECT] session ${session.id} writing bootstrap (${snippet.length} bytes)`);
+  // Write bootstrap + carriage return. The remote shell will execute it.
+  // Bootstrap starts with `stty -echo` so further keystrokes don't echo,
+  // and ends with one immediate __tb_remote_prompt call that emits the
+  // first salted marker. When parseOutput sees that marker with which='ssh',
+  // attachPtyHandlers transitions the state to 'active' and closes the
+  // outer ssh cell.
+  try {
+    session.ptyProcess.write(snippet + '\r');
+  } catch (e) {
+    debugLog(`[SSH_INJECT_FAIL] write error: ${e.message}`);
+    session.sshState = 'failed';
+    return;
+  }
+  // Safety timer: if we don't see the salted marker within INJECT_TIMEOUT_MS,
+  // give up (e.g. remote shell wasn't bash/zsh, or eaten silently).
+  setTimeout(() => {
+    if (session.sshState === 'injecting') {
+      debugLog(`[SSH_INJECT_TIMEOUT] session ${session.id} no salted marker after ${SSH_INJECT_TIMEOUT_MS}ms — fallback`);
+      session.sshState = 'failed';
+    }
+  }, SSH_INJECT_TIMEOUT_MS);
+}
+
+// Called from onData when we're in sshState='pending'. Looks at the most
+// recent chunk + tailBuf, and if the tail looks like a fresh remote prompt
+// awaiting input, schedules an injection after SSH_INJECT_IDLE_MS of quiet.
+function maybeScheduleSshInjection(session) {
+  if (session.sshState !== 'pending') return;
+  if (!sshMod.looksLikeRemotePromptReady(session.tailBuf.slice(-2000))) return;
+  if (session.sshIdleTimer) clearTimeout(session.sshIdleTimer);
+  session.sshIdleTimer = setTimeout(() => {
+    if (session.sshState !== 'pending') return;
+    session.sshState = 'injecting';
+    performSshInjection(session);
+  }, SSH_INJECT_IDLE_MS);
 }
 
 function attachPtyHandlers(session) {
@@ -349,6 +447,13 @@ function attachPtyHandlers(session) {
       session.tailBuf += dataStr;
       if (session.headlessTerminal) session.headlessTerminal.write(dataStr);
 
+      // the SSH integration: in 'pending' state, watch tailBuf for a remote prompt.
+      // We schedule (or reset) an injection timer; when output goes quiet
+      // for SSH_INJECT_IDLE_MS, we write the integration bootstrap.
+      if (session.sshState === 'pending') {
+          maybeScheduleSshInjection(session);
+      }
+
       if (dataStr.includes('\x1b[?1049h')) {
           session.isTuiActive = true;
           const tuiCell = session.cells.find(c => c.id === session.activeCellId);
@@ -376,22 +481,49 @@ function attachPtyHandlers(session) {
       // remote shell, BOTH the local bash salt and the per-SSH salt close
       // cells (the inner one wins on earliest index). `which` in finishMatch
       // tells us which.
-      // `allowUnsalted` is kept TRUE for now to preserve the existing "leaky
-      // the SSH integration" behavior where remote shells with their own 133;D markers
-      // (p10k, etc.) cause cell boundaries. The real the SSH integration implementation
-      // (commit C2) flips this to false except during bootstrap.
+      //
+      // `allowUnsalted`: TRUE when SSH is NOT active so that today's "leaky
+      // the SSH integration" still works for users on shells with built-in OSC 133
+      // (p10k, etc.) BEFORE they hit an `ssh ...` command. The moment SSH
+      // is active, we require salted markers — this is what makes the
+      // remote cell boundaries SAFE (no remote-shell-emitted unsalted
+      // marker can close a the SSH integration cell).
+      const allowUnsalted = !session.sshActive;
       const finishMatch = parseOutput(
           session.tailBuf,
           [session.promptSalt, session.sshPromptSalt].filter(Boolean),
-          { allowUnsalted: true },
+          { allowUnsalted },
       );
       if (session.activeCellId && finishMatch) {
-          debugLog(`[FINISH] exit=${finishMatch.exitCode} pwd=${JSON.stringify(finishMatch.pwd)} env=${JSON.stringify(finishMatch.env || {})}`);
+          debugLog(`[FINISH] which=${finishMatch.which} exit=${finishMatch.exitCode} pwd=${JSON.stringify(finishMatch.pwd)} env=${JSON.stringify(finishMatch.env || {})}`);
       }
       if (session.activeCellId) {
         const cell = session.cells.find(c => c.id === session.activeCellId);
         if (finishMatch && !session.isTuiActive) {
-            debugLog(`[CELL_CLOSE] session ${sessionId} cellId=${session.activeCellId}`);
+            // ── the SSH integration: special handling for the BOOTSTRAP success signal ──
+            // When sshState='injecting' and we get a which='ssh' finishMatch,
+            // it means our bootstrap line just executed on the remote shell
+            // and __tb_remote_prompt fired. The marker is the SECOND output
+            // (the first being the echoed bootstrap line itself). We close
+            // the outer ssh cell now with usedSshSession=true; the next
+            // user-typed remote command will open a fresh remote cell.
+            //
+            // We deliberately DON'T treat this as a real "command finished" —
+            // we still close the outer cell, then transition to 'active'.
+            if (session.sshState === 'injecting' && finishMatch.which === 'ssh') {
+                debugLog(`[SSH_INJECT_OK] session ${sessionId} — outer cell ${session.activeCellId} closes, transitioning to active`);
+                session.sshState = 'active';
+                if (session.sshIdleTimer) { clearTimeout(session.sshIdleTimer); session.sshIdleTimer = null; }
+                // Update remote pwd from the integration's first emission.
+                if (finishMatch.pwd) session.pwd = finishMatch.pwd;
+                // Fall through to the normal close logic below; the outer
+                // cell is closed as a normal cell with exit 0. Mark it
+                // usedSshSession so frontend can render a clean "SSH session
+                // started" placeholder instead of the noisy bootstrap echo.
+                const outerCell = session.cells.find(c => c.id === session.sshOuterCellId);
+                if (outerCell) outerCell.usedSshSession = true;
+            }
+            debugLog(`[CELL_CLOSE] session ${sessionId} cellId=${session.activeCellId} which=${finishMatch.which}`);
             const toSend = session.tailBuf.substring(session.sentPos, finishMatch.firstIndex);
             if (toSend.length > 0) {
                 if (cell) cell.output = (cell.output || "") + toSend;
@@ -403,9 +535,18 @@ function attachPtyHandlers(session) {
             if (finishMatch.pwd) { session.pwd = finishMatch.pwd; persistSession(session); }
             const currentExitCode = finishMatch.exitCode;
             const shellEnv = finishMatch.env || {};
-            const gitBranch = envDetect.detectGitBranch(currentPwd);
+            // For remote cells (which='ssh'), env chips come from the remote
+            // shell's TBENV emission (branch=<git>, host=<hostname>, plus
+            // venv/conda). For local cells (which='local'), git branch is
+            // detected from the local filesystem at currentPwd.
+            const isRemoteCell = finishMatch.which === 'ssh';
+            const gitBranch = isRemoteCell
+                ? (shellEnv.branch || null)
+                : envDetect.detectGitBranch(currentPwd);
             const virtualEnv = shellEnv.venv || null;
             const condaEnv = shellEnv.conda || null;
+            const remoteHost = isRemoteCell ? (shellEnv.host || session.sshHost || null) : null;
+            const wasSshSession = !!(cell && cell.usedSshSession);
             const exitHandler = () => {
                 let snapshotAnsi = "";
                 let snapshotCols = 120;
@@ -428,6 +569,8 @@ function attachPtyHandlers(session) {
                     closedCell.gitBranch = gitBranch;
                     closedCell.virtualEnv = virtualEnv;
                     closedCell.condaEnv = condaEnv;
+                    closedCell.remoteHost = remoteHost;
+                    closedCell.usedSshSession = wasSshSession;
                     persistCell(session, closedCell);
                 }
                 for (const ws of session.clients) ws.send(JSON.stringify({
@@ -439,6 +582,8 @@ function attachPtyHandlers(session) {
                     snapshotCols, snapshotRows,
                     usedTui: wasTui,
                     gitBranch, virtualEnv, condaEnv,
+                    remoteHost,
+                    usedSshSession: wasSshSession,
                 }));
                 if (session.pendingQueue.length > 0) {
                     const nextCmd = session.pendingQueue.shift();
@@ -446,6 +591,14 @@ function attachPtyHandlers(session) {
                 }
             };
             setTimeout(exitHandler, 300);
+            // ── the SSH integration: if a which='local' finishMatch arrived while
+            // sshActive, that means the OUTER ssh process exited (control
+            // returned to our local bash). Tear down SSH state so subsequent
+            // commands are normal local cells again.
+            if (session.sshActive && finishMatch.which === 'local') {
+                debugLog(`[SSH_END] session ${sessionId} outer ssh exited`);
+                clearSshState(session);
+            }
             session.activeCellId = null;
             session.tailBuf = session.tailBuf.substring(finishMatch.matchEnd);
             session.sentPos = 0;
@@ -475,10 +628,52 @@ function attachPtyHandlers(session) {
 
 function startCommand(session, cellId, commandData) {
     debugLog(`[COMMAND_START] session ${session.id} cellId=${cellId} cmd=${commandData}`);
+
+    // ── the SSH integration detection ──
+    // If we're starting a NEW top-level command (not already inside an
+    // active SSH session), inspect commandData. When it's an interactive
+    // `ssh user@host`, transition to sshState='pending' so the onData
+    // handler will inject our integration once the remote prompt shows up.
+    // Single-shot ssh (with a trailing remote command) is left alone — it
+    // behaves identically to any other local one-shot command.
+    let isSshOuterStart = false;
+    let inSshContext = session.sshActive && session.sshState === 'active';
+    if (!inSshContext) {
+        const sshInfo = sshMod.parseSshCommand(commandData);
+        if (sshInfo.isSsh && !sshInfo.isSingleShot && !sshInfo.optOut) {
+            session.sshActive = true;
+            session.sshHost = sshInfo.host;
+            session.sshOuterCellId = cellId;
+            session.sshPromptSalt = uuidv4().replace(/-/g, '');
+            session.sshState = 'pending';
+            isSshOuterStart = true;
+            // Replace commandData with the cleaned form (--no-termbook stripped).
+            commandData = sshInfo.cleanedCommand;
+            debugLog(`[SSH_START] session ${session.id} host=${sshInfo.host} salt=${session.sshPromptSalt}`);
+        }
+    }
+
     session.activeCellId = cellId; session.isTuiActive = false;
-    const newCell = { id: cellId, command: commandData, output: "", isRunning: true, executablePwd: session.pwd, startedAt: Date.now() };
+    const newCell = {
+        id: cellId,
+        command: commandData,
+        output: "",
+        isRunning: true,
+        executablePwd: session.pwd,
+        startedAt: Date.now(),
+        // Tag remote cells with the SSH host so the frontend can render
+        // a 🔌 chip. Only set for cells issued WHILE in an active SSH
+        // session — the outer `ssh ...` cell itself is NOT tagged this
+        // way (it's tagged later with usedSshSession instead).
+        remoteHost: inSshContext ? session.sshHost : null,
+    };
     session.cells.push(newCell);
     persistCell(session, newCell);
+
+    // Recreate the headless terminal at the cell boundary so the snapshot
+    // covers only this cell's output. EXCEPTION: when we're inside an
+    // active SSH session, the PTY is shared with the remote shell and we
+    // want headless terminal to be cell-scoped too — same logic applies.
     if (session.headlessTerminal) {
         try { session.headlessTerminal.dispose(); } catch (e) {}
         session.headlessTerminal = null;
@@ -490,10 +685,12 @@ function startCommand(session, cellId, commandData) {
         session.serializeAddon = new SerializeAddon();
         session.headlessTerminal.loadAddon(session.serializeAddon);
     }
-    const newCellMsg = JSON.stringify({ type: 'new_cell', cellId, command: commandData });
-    // Broadcast to other clients (originating client already added it via UI)
-    // Wait, the originating client currently relies on the message too. 
-    // Actually, it's safer to let the client handle it, but we MUST ensure keys are unique.
+    const newCellMsg = JSON.stringify({
+        type: 'new_cell',
+        cellId,
+        command: commandData,
+        remoteHost: newCell.remoteHost,
+    });
     for (const ws of session.clients) if (ws.readyState === 1) ws.send(newCellMsg);
     if (session.tailBuf.length > 0 && !session.tailBuf.includes('\x1b[2J')) {
         session.headlessTerminal.write(session.tailBuf);
@@ -507,6 +704,7 @@ function startCommand(session, cellId, commandData) {
     // subsequent `read` (or anything reading stdin) would consume as an
     // empty line.
     session.ptyProcess.write(commandData + '\r');
+    void isSshOuterStart; // (reserved for future use; currently the state machine handles it)
 }
 
 wss.on('connection', (ws, req) => {
