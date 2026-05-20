@@ -15,11 +15,22 @@ what not to do, where the traps are, and what "done" looks like.
    in `backend/server.js`, `backend/parser.js`, `frontend/src/NotebookCell.jsx`,
    or `frontend/src/App.jsx`. Most of those lines exist because of a
    specific bug. Don't re-introduce them.
-3. The test suite that actually matters is `frontend/tests/visual/*.spec.mjs`
-   (20 tests). The legacy `frontend/tests/*.spec.{js,ts}` is abandoned cruft
+3. The test suites that matter are:
+   - `frontend/tests/visual/*.spec.mjs` (40+ tests) — fast functional +
+     motion regressions. Run with `npm run test:visual`.
+   - `frontend/tests/e2e/*.spec.mjs` (20+ tests) — full human-workflow
+     E2E with screenshots, video, pixel goldens. Run with
+     `npm run test:e2e`.
+   - `npm run test:all` runs both.
+   The legacy `frontend/tests/*.spec.{js,ts}` is abandoned cruft
    — do not run or modify it.
-4. Before claiming "done": `cd frontend && npm run test:visual` must pass
-   20/20. Show the user real screenshots or videos of the change.
+4. Before claiming "done": `npm run test:all` must pass green. Show the
+   user real screenshots or videos of the change (the e2e tests produce
+   these automatically in `frontend/test-results/`).
+5. **Never delete an e2e test as "ad-hoc debug script".** If you wrote
+   a Playwright driver to investigate something, promote it into
+   `tests/e2e/` — that's how this codebase stays well-tested. See
+   `frontend/tests/e2e/README.md`.
 
 ## Project layout
 
@@ -41,14 +52,25 @@ termbook/
 │   │   ├── NotebookCell.jsx       ← per-cell rendering, ~285 lines
 │   │   ├── TuiModal.jsx           ← full-screen TUI host, ~95 lines
 │   │   └── index.css              ← all styles
-│   ├── tests/visual/            ← curated 20-test suite (the only tests that matter)
+│   ├── tests/visual/            ← curated regression + motion suite
 │   │   ├── motion.spec.mjs        ← catches transient flashes
 │   │   ├── regression.spec.mjs    ← catches functional regressions
 │   │   ├── helpers.mjs
 │   │   └── README.md
+│   ├── tests/e2e/               ← end-to-end human-workflow suite
+│   │   ├── 01_dev_workflow.spec.mjs
+│   │   ├── 02_interactive_commands.spec.mjs
+│   │   ├── 03_alt_screen_tui.spec.mjs
+│   │   ├── 04_persistence.spec.mjs
+│   │   ├── 05_motion_stability.spec.mjs
+│   │   ├── 06_visual_snapshots.spec.mjs        ← pixel goldens
+│   │   ├── 06_*-snapshots/                     ← golden PNGs (committed)
+│   │   ├── helpers.mjs
+│   │   └── README.md
 │   ├── tests/                   ← earlier ad-hoc scripts (ignore)
-│   ├── playwright.config.ts       ← legacy config (ignore)
-│   └── playwright.visual.config.js ← config for the real suite
+│   ├── playwright.config.ts        ← legacy config (ignore)
+│   ├── playwright.visual.config.js ← visual / regression suite
+│   └── playwright.e2e.config.js    ← e2e suite (video always on)
 └── docs/                        ← see Documentation in README
 ```
 
@@ -72,6 +94,8 @@ explicit task.
   end-state screenshots.
 - Run `cd frontend && npm run test:visual` before declaring done. All 20
   must pass.
+- When fixing a regression: add or extend a test in
+  `frontend/tests/visual/regression.spec.mjs` so it can't happen again.
 - When fixing a regression: add or extend a test in
   `frontend/tests/visual/regression.spec.mjs` so it can't happen again.
 - When fixing a flash/transition: add a test in
@@ -180,18 +204,24 @@ session activity. Truncate it before reproducing a bug:
 
 A change is done when:
 
-1. `cd frontend && npm run test:visual` is 20/20 green.
+1. `cd frontend && npm run test:all` is green (both visual and e2e suites).
 2. You drove the app with Playwright (headless or visible) and looked at
-   actual screenshots/video proving the change works.
+   actual screenshots/video proving the change works. The e2e suite
+   produces these for free under `test-results/`.
 3. For UX changes: the user can see the difference. Take a before/after
-   screenshot and show them.
+   screenshot and show them. If you're changing pixels intentionally,
+   regenerate the golden screenshots with
+   `npm run test:e2e:update` AND visually inspect every regenerated
+   file before committing.
 4. The commit message body explains *why*, links to the issue/symptom, and
    names the files changed.
 5. The fix is testable. Either an existing test covers it, or you added a
-   new test in `tests/visual/`.
+   new test in `tests/visual/` (focused regression) or `tests/e2e/`
+   (full workflow / pixel goldens).
 6. No new files in the repo root, `backend/`, or `frontend/src/` that
    aren't part of the actual fix. Especially not `_*.mjs` scratch files —
-   delete them before committing.
+   if a Playwright driver was useful, promote it into `tests/e2e/`;
+   otherwise delete it before committing.
 
 ## Anti-patterns observed in this repo's history
 
