@@ -302,4 +302,56 @@ test.describe('SSH session — on by default', () => {
         const printfCellCount = cells.filter(c => (c.cmd || '').includes('printf')).length;
         expect(printfCellCount).toBe(1);
     });
+
+    test('K: Tab completion in chat input completes against the REMOTE filesystem', async ({ page }, testInfo) => {
+        // The SSH integration's Tab completion routes through the remote shell (via the
+        // __tb_complete RPC injected at session start), NOT through local
+        // /api/complete on the backend's filesystem.
+        //
+        // Verifies:
+        //   1. Tab completes a remote-only path to its single match.
+        //   2. Multiple matches cycle correctly with repeated Tab presses.
+        //   3. TBCMP markers do NOT leak into any cell output.
+        await gotoFreshSession(page);
+        await loginSsh(page);
+
+        // Prepare three remote files with a common prefix.
+        await runRemote(page, 'touch /tmp/__tb_e2e_tab_a /tmp/__tb_e2e_tab_b /tmp/__tb_e2e_tab_c');
+
+        const inp = page.locator('.chat-input-wrapper textarea').first();
+        await inp.focus();
+        await inp.fill('ls /tmp/__tb_e2e_tab_');
+        await page.keyboard.press('Tab');
+        await page.waitForTimeout(700);
+        const t1 = await page.evaluate(() => document.querySelector('.chat-input-wrapper textarea')?.value);
+        await page.keyboard.press('Tab');
+        await page.waitForTimeout(400);
+        const t2 = await page.evaluate(() => document.querySelector('.chat-input-wrapper textarea')?.value);
+        await page.keyboard.press('Tab');
+        await page.waitForTimeout(400);
+        const t3 = await page.evaluate(() => document.querySelector('.chat-input-wrapper textarea')?.value);
+        await shot(page, testInfo, '01_after_tab_cycle');
+
+        // Each Tab should produce a distinct candidate.
+        const completions = [t1, t2, t3];
+        const distinct = new Set(completions);
+        expect(distinct.size).toBe(3);
+        // All three must end with one of a/b/c.
+        for (const c of completions) {
+            expect(c).toMatch(/^ls \/tmp\/__tb_e2e_tab_[abc]$/);
+        }
+
+        // Crucially: no TBCMP marker text should appear in ANY cell.
+        const anyTbcmp = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('.notebook-cell')).some(c =>
+                (c.querySelector('.cell-output')?.innerText || '').includes('TBCMP')
+            );
+        });
+        expect(anyTbcmp).toBe(false);
+
+        // Cleanup
+        await page.keyboard.press('Escape');
+        await inp.fill('');
+        await runRemote(page, 'rm -f /tmp/__tb_e2e_tab_a /tmp/__tb_e2e_tab_b /tmp/__tb_e2e_tab_c');
+    });
 });
