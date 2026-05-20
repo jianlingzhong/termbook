@@ -721,7 +721,12 @@ function App() {
                 onRerun={(cmd) => { setInputValue(cmd); refocusInput(); }}
             />
           ))}
-          <div style={{ height: 'calc(100vh - 240px)', flexShrink: 0 }} />
+          {/* Bottom padding so the latest cell can scroll to viewport top.
+              Only when there are cells; on empty state, this would push the
+              welcome content off-screen. */}
+          {(sessionCells[activeSessionId] || []).length > 0 && (
+            <div style={{ height: 'calc(100vh - 240px)', flexShrink: 0 }} />
+          )}
         </div>
         {showJumpToBottom && (
           <button className="jump-to-bottom" onClick={jumpToBottom} title="Jump to bottom">
