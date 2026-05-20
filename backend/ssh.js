@@ -146,6 +146,32 @@ function buildRemoteIntegration(salt) {
       `__tb_env_pairs="\${__tb_env_pairs}\${__tb_env_pairs:+;}host=$__tb_host"; ` +
       `printf '\\033]1338;TBENV;%s\\007\\033]133;D;%s;${salt}\\007\\033]7;file://%s%s\\007' "$__tb_env_pairs" "$__tb_exit" "$__tb_host" "$PWD"; ` +
     `}`,
+    // ── Remote completion RPC ──
+    // Backend can call `__tb_complete <reqId> <prefix>` to get path
+    // completions on the REMOTE filesystem at the REMOTE current pwd.
+    // Response is wrapped in salted OSC 1339 markers
+    // (\033]1339;TBCMP;<reqId>;<salt>;<count>\007 <NL-list> \033]1339;TBCMPEND;<reqId>;<salt>\007)
+    // which the backend recognizes, extracts, and STRIPS from the broadcast
+    // stream so the user never sees them.
+    //
+    // Shell-agnostic: we use globbing (works in bash + zsh) rather than
+    // bash-only \`compgen\`. We append \`/\` to directory matches so the
+    // frontend can decide whether to add a trailing space.
+    `__tb_complete() { ` +
+      `local __tbc_req="$1"; local __tbc_prefix="$2"; ` +
+      // Disable zsh's "no match" error if glob expands to nothing.
+      `setopt local_options no_nomatch 2>/dev/null; ` +
+      `local __tbc_matches=("\${__tbc_prefix}"*); ` +
+      `local __tbc_out=""; local __tbc_count=0; local __tbc_m; ` +
+      `for __tbc_m in "\${__tbc_matches[@]}"; do ` +
+        `if [ -e "$__tbc_m" ] || [ -L "$__tbc_m" ]; then ` +
+          `if [ -d "$__tbc_m" ]; then __tbc_out="\${__tbc_out}\${__tbc_m}/\\n"; ` +
+          `else __tbc_out="\${__tbc_out}\${__tbc_m}\\n"; fi; ` +
+          `__tbc_count=$((__tbc_count+1)); ` +
+        `fi; ` +
+      `done; ` +
+      `printf '\\033]1339;TBCMP;%s;${salt};%s\\007%b\\033]1339;TBCMPEND;%s;${salt}\\007' "$__tbc_req" "$__tbc_count" "$__tbc_out" "$__tbc_req"; ` +
+    `}`,
     // bash: PROMPT_COMMAND. zsh: precmd function (we set both for safety).
     `PROMPT_COMMAND='__tb_remote_prompt'`,
     `if [ -n "$ZSH_VERSION" ]; then precmd_functions=(__tb_remote_prompt); fi`,
@@ -153,6 +179,42 @@ function buildRemoteIntegration(salt) {
     `__tb_remote_prompt`,
   ];
   return lines.join('; ');
+}
+
+// Build the request-side payload sent to the PTY to invoke __tb_complete.
+// Includes a leading Ctrl+U (kill-line) to clear any partial input the user
+// happened to be typing in their remote shell line editor, so our RPC line
+// is always evaluated against an empty input buffer.
+function buildRemoteCompletionRequest(reqId, prefix) {
+  // Escape single-quotes in prefix for safe shell single-quoting.
+  const safe = prefix.replace(/'/g, `'\\''`);
+  // \x15 = Ctrl+U (kill-whole-line); \r = execute
+  return `\x15__tb_complete '${reqId}' '${safe}'\r`;
+}
+
+// Parse a TBCMP / TBCMPEND pair out of a buffer. Returns null if no full
+// pair is present. The matched range (request and response markers + the
+// body between them) is returned so the caller can splice it out of the
+// broadcast stream.
+function parseRemoteCompletionResponse(buf, reqId, salt) {
+  // Be defensive: escape regex metas in salt/reqId (they're hex/uuid in
+  // practice but cheap insurance).
+  const esc = s => s.replace(/[\\^$*+?.()|[\]{}]/g, '\\$&');
+  const startRe = new RegExp(`\\x1b\\]1339;TBCMP;${esc(reqId)};${esc(salt)};(\\d+)\\x07`);
+  const endRe = new RegExp(`\\x1b\\]1339;TBCMPEND;${esc(reqId)};${esc(salt)}\\x07`);
+  const startM = buf.match(startRe);
+  if (!startM) return null;
+  const afterStart = startM.index + startM[0].length;
+  const endM = buf.slice(afterStart).match(endRe);
+  if (!endM) return null;
+  const body = buf.slice(afterStart, afterStart + endM.index);
+  const candidates = body.split('\n').map(s => s.trim()).filter(Boolean);
+  return {
+    count: parseInt(startM[1], 10),
+    candidates,
+    rangeStart: startM.index,
+    rangeEnd: afterStart + endM.index + endM[0].length,
+  };
 }
 
 // Heuristic: does this chunk of PTY output look like a fresh remote shell
@@ -185,5 +247,7 @@ function looksLikeRemotePromptReady(text) {
 module.exports = {
   parseSshCommand,
   buildRemoteIntegration,
+  buildRemoteCompletionRequest,
+  parseRemoteCompletionResponse,
   looksLikeRemotePromptReady,
 };
