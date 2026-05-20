@@ -23,6 +23,13 @@ export default defineConfig({
     workers: 1,
     forbidOnly: !!process.env.CI,
     retries: 0,
+    // Global setup spins up a userspace sshd on 127.0.0.1:2222 that the
+    // SSH spec (08_ssh_session.spec.mjs) connects to. Non-SSH specs ignore
+    // it — sshd binding to a high port has zero impact on the rest. The
+    // sshd is intentionally LEFT RUNNING after teardown so subsequent test
+    // runs reuse it (overridable via TERMBOOK_E2E_KILL_SSHD=1).
+    globalSetup: './tests/e2e/ssh-global-setup.mjs',
+    globalTeardown: './tests/e2e/ssh-global-teardown.mjs',
     reporter: [
         ['list'],
         ['html', { outputFolder: 'playwright-report-e2e', open: 'never' }],
