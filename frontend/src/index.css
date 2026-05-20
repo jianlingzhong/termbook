@@ -299,6 +299,53 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
     color: var(--text-primary);
 }
 
+.maximize-btn {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-light);
+    padding: 6px 10px;
+    border-radius: 99px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+.maximize-btn:hover {
+    background: rgba(0, 236, 236, 0.08);
+    border-color: var(--border-active);
+    color: var(--accent-cyan);
+}
+
+/* Full-screen mode: hide sidebar + top header, expand main area to viewport.
+   Hover near the top reveals a floating exit button. */
+.app-container.is-maximized .sidebar { display: none; }
+.app-container.is-maximized .top-header { display: none; }
+.exit-fullscreen-floating {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 300;
+    background: var(--bg-panel);
+    backdrop-filter: blur(16px);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: 99px;
+    padding: 8px 12px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.35;
+    transition: opacity 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
+}
+.exit-fullscreen-floating:hover {
+    opacity: 1;
+    background: rgba(0, 236, 236, 0.08);
+    border-color: var(--border-active);
+    color: var(--accent-cyan);
+}
+
 /* REFINED CURSOR FIX */
 .xterm-cursor { visibility: visible !important; opacity: 1 !important; z-index: 1000 !important; }
 .xterm-cursor.xterm-cursor-block { background-color: var(--accent-cyan) !important; outline: 1px solid var(--accent-cyan) !important; }
