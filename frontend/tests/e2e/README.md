@@ -15,8 +15,14 @@ tests/e2e/
 ├── 03_alt_screen_tui.spec.mjs       # vim modal lifecycle
 ├── 04_persistence.spec.mjs          # backend restart → cells survive
 ├── 05_motion_stability.spec.mjs     # sampling-based flash detection
-└── 06_visual_snapshots.spec.mjs     # pixel-diff against golden PNGs
+├── 06_visual_snapshots.spec.mjs     # pixel-diff against golden PNGs
+└── 07_scroll_behavior.spec.mjs      # 19-test scroll matrix (submit/switch/restore/bounce/vim/passthrough)
 ```
+
+For the full helper API reference and conventions, see
+[`docs/testing.md`](../../../docs/testing.md). For agents working on this
+codebase, also see
+[`docs/skills/termbook-e2e/SKILL.md`](../../../docs/skills/termbook-e2e/SKILL.md).
 
 ## Running
 
@@ -47,9 +53,9 @@ into a browsable dashboard.
 
 ## Golden screenshots (visual snapshots)
 
-`06_visual_snapshots.spec.mjs` uses `expect(page).toHaveScreenshot(name)`,
-which diffs against a stored PNG under
-`tests/e2e/06_visual_snapshots.spec.mjs-snapshots/`.
+`06_visual_snapshots.spec.mjs` and `07_scroll_behavior.spec.mjs` (G1/G2)
+use `expect(page).toHaveScreenshot(name)`, which diffs against stored
+PNGs under `tests/e2e/<spec>.mjs-snapshots/`.
 
 - **First run**: the golden is created. Inspect it manually, then commit
   it.

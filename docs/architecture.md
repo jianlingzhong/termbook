@@ -1,8 +1,8 @@
 # Architecture
 
-How Termbook actually works today (post-`de72756`). This is descriptive,
-not aspirational. If something in this document doesn't match the code,
-the code is right and this doc is stale — fix the doc.
+How Termbook actually works today. This is descriptive, not aspirational.
+If something in this document doesn't match the code, the code is right
+and this doc is stale — fix the doc.
 
 ## Two processes, one WebSocket
 
@@ -77,7 +77,10 @@ code obvious.
    - Appends to `session.tailBuf`
    - Writes to `session.headlessTerminal` (shadow buffer)
    - Detects `\x1b[?1049h`/`l` (TUI enter/exit) and broadcasts `tui_enter`/`tui_exit`
-   - Counts cursor-positioning escapes for inline-TUI detection
+   - Accumulates an `_ansiScore` (cursor moves, clear ops, hide-cursor)
+     which only affects snapshot rendering at cell close (high score →
+     "Interactive session ended" placeholder instead of the messy
+     redrawn-in-place snapshot)
    - Calls `parseOutput(tailBuf, promptSalt)` looking for the prompt
      completion marker
 6. **Shell prompt fires**, emitting:
@@ -121,10 +124,10 @@ A cell goes through two visual states:
     is replaced with a small "Interactive session ended" placeholder
     because the post-TUI screen state is usually garbage
 
-## TUI mode
+## TUI mode (alt-screen)
 
 A TUI is detected when the PTY output contains `\x1b[?1049h` (enter
-alt-screen). When this happens:
+alt-screen). vim, top, htop, less, etc. all do this. When detected:
 
 1. Backend sets `session.isTuiActive = true`, marks `cell.usedTui = true`,
    broadcasts `tui_enter` with `cellId`.
@@ -138,6 +141,85 @@ alt-screen). When this happens:
 5. When PTY emits `\x1b[?1049l` (exit alt-screen), backend broadcasts
    `tui_exit`, cell goes back into the notebook, then (typically) the
    shell's prompt marker fires and the cell completes normally.
+
+## Inline interactive commands (passthrough mode)
+
+Many modern CLIs (gemini-cli, claude-cli, ink-based apps, plus simple
+ones like `cat`, `read`, `python` REPL) are interactive but **do NOT** use
+the alt-screen buffer. They render inline at the bottom of the terminal,
+scrolling normally, and read keystrokes one at a time.
+
+For those, we do NOT open the TUI modal. Instead the cell renders inline
+as usual, and the chat input enters **passthrough mode**: every keystroke
+is sent directly to the running command's PTY as a raw byte sequence.
+
+Detection: there is none. **Whenever a command is running and the TUI
+modal isn't open, the chat input is in passthrough mode** (`isPassthrough
+= sessionRunning[id] && !activeTuiState`). No heuristics, no per-program
+detection. This is what the user wants 100% of the time.
+
+Key translations in `App.jsx` `handleCommand`:
+
+```
+printable char    → as-is
+Enter             → '\r'
+Backspace         → '\x7f'
+Tab               → '\t'
+Escape            → '\x1b'
+ArrowUp/Down/L/R  → '\x1b[A' / '\x1b[B' / '\x1b[D' / '\x1b[C'
+Ctrl+letter       → '\x01' .. '\x1a'
+```
+
+The chat input gets `.is-passthrough` class (cyan ring) and a
+"Sending keystrokes to running command…" placeholder. When the cell
+exits, `isPassthrough` flips back to false and the input returns to
+normal command-entry mode.
+
+Cmd+K, Ctrl+R, and Cmd+Shift+F still work in passthrough mode (they
+bypass the keystroke forwarding).
+
+This is also what makes `cat` (no args) usable: type lines, press Ctrl+D
+to send EOF, cat exits cleanly.
+
+## Scroll behavior
+
+Two interacting requirements:
+
+1. **After submit**: the new cell's top edge should sit at the top of the
+   viewport (matching Warp / Jupyter feel).
+2. **On session switch**: by default the same — latest cell at top. BUT
+   if the user had explicitly scrolled the source session before
+   switching away, restore that scroll position on return.
+
+Implementation in `App.jsx`:
+
+- `sessionScrollMemoRef.current = { [sessionId]: { scrollTop, userScrolled } }`
+- A scroll event is treated as "user-initiated" ONLY if a wheel /
+  touchmove / scroll-related key (PageUp/Down, Home, End, Arrow when
+  NOT in a text input) fired within the last 500ms. Generic scroll
+  events (from layout shifts, cell renders, fit-addon resizes, session
+  swap DOM churn) do NOT count — they constantly fire and would
+  pollute the memo.
+- Effect order matters: the `activeSessionId` useEffect is declared
+  BEFORE the cells useEffect so React runs it first on session switch.
+  It sets `pendingScrollRef.current = { kind: 'restoreMemo' | 'latestAtTop' }`
+  AND resets `lastCellCountRef.current`. The cells useEffect then
+  consumes the pending action across a few rAFs (cells may still be
+  mounting when the first rAF fires).
+- CSS `.notebook-content { overflow-anchor: none; }` — disables the
+  browser's scroll-anchoring feature, which otherwise nudges scrollTop
+  during layout shifts and fights our explicit restoration.
+
+Use `queryLastCell(scrollContainer)` (in `App.jsx`) to find the last cell
+— NOT `:last-of-type`. The notebook renders a sentinel `<div>` after the
+cells (the 240px bottom padding that lets the latest cell scroll to the
+top of the viewport) and `:last-of-type` is tag-based, so it picks the
+sentinel.
+
+The 19-test scroll behavior matrix is in
+`frontend/tests/e2e/07_scroll_behavior.spec.mjs`. Add to it when you
+touch any of: scroll memo, session switch, submit anchor, sentinel,
+overflow-anchor.
 
 ## Prompt marker mechanics
 
@@ -287,6 +369,93 @@ The frontend (`App.jsx`) on Tab:
 
 The hint UI (`.completion-hint`) shows up to 8 candidates inline above
 the input with the active one highlighted and "Tab to cycle" affordance.
+
+## Environment awareness (git / venv / conda chips)
+
+Each closed cell displays up to three small chips next to its pwd
+breadcrumb: git branch (purple), Python venv (yellow), conda env (green).
+
+- **Git branch**: `backend/env_detect.js` runs `git rev-parse --abbrev-ref HEAD`
+  in the cell's `pwd`, with a 5s in-memory cache to avoid fork-bombing git.
+  Detached-HEAD becomes `(<short-sha>)`. Synchronous + cheap.
+- **venv / conda**: `VIRTUAL_ENV` and `CONDA_DEFAULT_ENV` live inside the
+  PTY shell, invisible to the parent backend. We add a second OSC marker
+  (`OSC 1338 ;TBENV; key=val;key=val BEL`) to `PROMPT_COMMAND`, emitted
+  BEFORE the OSC 133;D finish marker. `parser.js` parses it and the
+  `finishMatch.env` field carries `{ venv, conda }` into the cell.
+
+Critical ordering note: the env marker MUST be emitted BEFORE the OSC
+133;D finish marker. `parseOutput` slices the tailBuf immediately when
+it sees 133;D, so an env marker arriving in a later chunk would be
+discarded.
+
+We also export `VIRTUAL_ENV_DISABLE_PROMPT=1` and `CONDA_CHANGEPS1=false`
+in our bashrc so the activate scripts don't mutate PS1 (which would leak
+`(venv) ` prefix into cell snapshots).
+
+Schema (SQLite): cells table has `git_branch`, `virtual_env`, `conda_env`
+columns (added via idempotent ALTER TABLE migration in
+`backend/persistence.js`).
+
+## Cmd+K action palette
+
+VS Code-style fuzzy-searchable command palette. Pressing Cmd+K (or
+Ctrl+K) opens a centered modal listing all in-app actions:
+
+- Search command history
+- Clear terminal output (Cmd+L)
+- New session (Cmd+N hint)
+- Re-run last command (shows the actual cmd inline)
+- Delete current session
+- Switch session (when there's more than one)
+- Copy last cell output (to clipboard)
+- Toggle full screen (Cmd+Shift+F)
+
+Defined as a static array in `App.jsx`. Each action is
+`{ id, label, hint, run }`. Fuzzy filtering uses `fuzzyScore()`:
+exact match > startsWith > word-boundary > substring > char-by-char.
+
+The overlay reuses the `.history-search-overlay` CSS for visual
+consistency, with `.palette-modal` for label+hint two-column layout.
+
+## Full-screen workspace mode (Cmd+Shift+F)
+
+Cmd+Shift+F (or Ctrl+Shift+F, or the maximize icon next to "Clear
+History") toggles full-screen mode: the sidebar and top header hide
+(`.app-container.is-maximized`), giving the notebook the full viewport.
+A floating exit-fullscreen button at top-right (subtle 0.35 opacity,
+1.0 on hover) is the safety hatch.
+
+Preference persists in `localStorage` as `termbook_maximized`.
+
+The keyboard shortcut is bound ONLY at the window-level handler, not
+also in the input's handleCommand. Binding both would call
+`toggleMaximized()` twice (preventDefault doesn't stop propagation),
+netting zero state change. Cmd+K survives the same dual-binding because
+`setPaletteOpen(true)` is idempotent; toggle is not.
+
+PTY width updates automatically: the per-cell `ResizeObserver` already
+observes layout changes and re-emits a resize to the backend.
+
+## Desktop notifications
+
+When a command takes >5s (`NOTIFY_THRESHOLD_MS`) AND the user is not
+looking at the Termbook tab, fire a native `Notification`:
+
+- exit 0 → `Termbook: command finished` + the command string
+- exit !0 → `Termbook: command failed (exit N)`
+
+Detection: `document.visibilityState !== 'visible'` OR
+`!document.hasFocus()`. Both required — if the tab is visible AND
+focused, the user can already see the cell finish on screen.
+
+Permission flow:
+- `Notification.permission === 'granted'` → fire immediately
+- `'default'` → request, then fire if user accepts
+- `'denied'` → silently skip
+
+`tag: 'termbook-cmd'` replaces stale notifications so multiple
+finishing commands don't pile up.
 
 ## Ctrl+R fuzzy history search
 
