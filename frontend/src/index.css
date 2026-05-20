@@ -116,6 +116,13 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
   background: rgba(110, 231, 183, 0.08);
   border: 1px solid rgba(110, 231, 183, 0.22);
 }
+/* SSH chip: warm orange — distinct from cyan pwd-breadcrumb and purple
+   git chip so users instantly see "this cell ran on a remote host". */
+.cell-env-chip-ssh {
+  color: #fdba74;
+  background: rgba(251, 146, 60, 0.10);
+  border: 1px solid rgba(251, 146, 60, 0.30);
+}
 .prompt-arrow { color: var(--accent-cyan) !important; font-weight: 900; font-family: "JetBrains Mono", monospace; font-size: 16px; margin-right: 4px; }
 .read-only-command { font-family: "JetBrains Mono", monospace; color: #ffffff; font-size: 15px; font-weight: 600; word-break: break-all; white-space: pre-wrap; line-height: 1.6; }
 .cell-output { padding: 4px 16px; min-height: 24px; overflow: auto; display: block; background: #000000 !important; position: relative; width: 100%; box-sizing: border-box; transition: height 0.2s ease-out; }

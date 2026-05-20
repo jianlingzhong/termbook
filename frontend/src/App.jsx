@@ -488,7 +488,9 @@ function App() {
                 setSessionCells(prev => {
                     const currentCells = prev[sessionId] || [];
                     if (currentCells.some(c => c.id === newCellId)) return prev;
-                    return { ...prev, [sessionId]: [...currentCells, { id: newCellId, command: msg.command, output: "", isRunning: true, startedAt: Date.now() }] };
+                    // remoteHost: set by backend on cells issued inside an active
+                    // SSH session (the SSH integration). Used to render the 🔌 host chip.
+                    return { ...prev, [sessionId]: [...currentCells, { id: newCellId, command: msg.command, output: "", isRunning: true, startedAt: Date.now(), remoteHost: msg.remoteHost || null }] };
                 });
                 setSessionRunning(prev => ({ ...prev, [sessionId]: true }));
             } else if (msg.type === 'tui_enter') {
@@ -502,13 +504,13 @@ function App() {
                 const termData = getOrCreateTerminal(sessionId, msg.cellId);
                 termData.terminal.write(msg.data);
             } else if (msg.type === 'exit') {
-                const { cellId, pwd, snapshotAnsi, snapshotCols, snapshotRows, exitCode, usedTui, gitBranch, virtualEnv, condaEnv } = msg;
+                const { cellId, pwd, snapshotAnsi, snapshotCols, snapshotRows, exitCode, usedTui, gitBranch, virtualEnv, condaEnv, remoteHost, usedSshSession } = msg;
                 const now = Date.now();
                 // Find startedAt to compute duration for notifications.
                 const cell = (sessionCellsRef.current[sessionId] || []).find(c => c.id === cellId);
                 const duration = cell && cell.startedAt ? now - cell.startedAt : null;
                 maybeNotifyCommandFinished(cell?.command || '', duration, exitCode);
-                setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshotAnsi, snapshotCols, snapshotRows, exitCode, finishedAt: now, usedTui, gitBranch, virtualEnv, condaEnv } : c) }));
+                setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshotAnsi, snapshotCols, snapshotRows, exitCode, finishedAt: now, usedTui, gitBranch, virtualEnv, condaEnv, remoteHost: remoteHost ?? c.remoteHost, usedSshSession } : c) }));
                 setSessionRunning(prev => ({ ...prev, [sessionId]: false }));
                 if (pwd) setSessionPwds(prev => ({ ...prev, [sessionId]: pwd }));
                 const termData = sessionTerminals.current[`${sessionId}-${cellId}`];
@@ -919,6 +921,8 @@ function App() {
                 gitBranch={c.gitBranch}
                 virtualEnv={c.virtualEnv}
                 condaEnv={c.condaEnv}
+                remoteHost={c.remoteHost}
+                usedSshSession={c.usedSshSession}
                 onRerun={(cmd) => { setInputValue(cmd); refocusInput(); }}
             />
           ))}

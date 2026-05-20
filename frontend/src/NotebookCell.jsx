@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Folder, Copy, RotateCcw, Check, AlertTriangle, GitBranch, Package } from 'lucide-react';
+import { Folder, Copy, RotateCcw, Check, AlertTriangle, GitBranch, Package, Server } from 'lucide-react';
 import { Terminal } from 'xterm';
 import { SerializeAddon } from '@xterm/addon-serialize';
 
@@ -61,7 +61,7 @@ function trimSnapshotRows(html) {
     return result;
 }
 
-export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotRows, activeTerminal, initialCommand, executablePwd, isRunning, isTuiActive, requestResize, exitCode, startedAt, finishedAt, usedTui, gitBranch, virtualEnv, condaEnv, onRerun }) {
+export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotRows, activeTerminal, initialCommand, executablePwd, isRunning, isTuiActive, requestResize, exitCode, startedAt, finishedAt, usedTui, gitBranch, virtualEnv, condaEnv, remoteHost, usedSshSession, onRerun }) {
   const terminalRef = useRef(null);
   const [isTerminalAttached, setIsTerminalAttached] = useState(false);
   const [renderedSnapshot, setRenderedSnapshot] = useState(null);
@@ -233,6 +233,12 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
                   )}
                 </>
             )}
+            {remoteHost && (
+                <div className="cell-env-chip cell-env-chip-ssh" title={`SSH: ${remoteHost}`}>
+                    <Server size={11} />
+                    <span>{remoteHost}</span>
+                </div>
+            )}
             {gitBranch && (
                 <div className="cell-env-chip cell-env-chip-git" title={`git: ${gitBranch}`}>
                     <GitBranch size={11} />
@@ -264,7 +270,7 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
           ref={outputRef}
           className="cell-output"
           style={
-            usedTui && !isRunning
+            (usedTui || usedSshSession) && !isRunning
               ? { minHeight: '32px', background: '#000', overflow: 'hidden' }
               : displaySnapshot
               // Snapshot cap leaves room for the chat input (~150px) so the
@@ -285,17 +291,20 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
           {usedTui && !isRunning && (
             <div className="tui-completed-placeholder">Interactive session ended</div>
           )}
-          {!usedTui && displaySnapshot && (
+          {usedSshSession && !isRunning && (
+            <div className="tui-completed-placeholder">SSH session — each remote command appears as its own cell below</div>
+          )}
+          {!usedTui && !usedSshSession && displaySnapshot && (
             <div
               className="snapshot-output"
               dangerouslySetInnerHTML={{ __html: displaySnapshot }}
               style={{ width: '100%' }}
             />
           )}
-          {!usedTui && !displaySnapshot && isTuiActive && (
+          {!usedTui && !usedSshSession && !displaySnapshot && isTuiActive && (
             <div className="tui-placeholder">Interactive TUI session active in modal...</div>
           )}
-          {!usedTui && !displaySnapshot && !isTuiActive && (
+          {!usedTui && !usedSshSession && !displaySnapshot && !isTuiActive && (
             <div className="live-terminal" ref={terminalRefCallback} style={{ width: '100%', height: '100%' }} />
           )}
         </div>
