@@ -513,6 +513,42 @@ test.describe('regression', () => {
         expect(await page.locator('.palette-modal').count()).toBe(0);
     });
 
+    // Tools like gemini-cli go into headless mode when CI=true is set in
+    // env. The backend must strip CI (and friends) from the env it passes
+    // to the PTY child shell, even if the backend process itself was
+    // started with CI=true.
+    test('PTY env does not inherit CI=true from backend launcher', async ({ page }) => {
+        await gotoFreshSession(page);
+        await runCommand(page, 'echo "CI=[${CI:-unset}] GITHUB_ACTIONS=[${GITHUB_ACTIONS:-unset}] TERM_PROGRAM=[${TERM_PROGRAM:-unset}]"', 1500);
+        const body = await page.evaluate(() => document.querySelector('.cell-output')?.innerText || '');
+        expect(body).toContain('CI=[unset]');
+        expect(body).toContain('GITHUB_ACTIONS=[unset]');
+        expect(body).toContain('TERM_PROGRAM=[termbook]');
+    });
+
+    // Inline TUI promotion: tools like gemini-cli, claude-cli, and other
+    // Ink-based interactive CLIs render full-screen prompts WITHOUT
+    // entering the alt-screen buffer (no OSC 1049h). The backend detects
+    // these via accumulated cursor-move ANSI activity and promotes the
+    // cell to TUI mode so the modal opens and routes input to the PTY.
+    test('inline TUI command (cursor-move-heavy) opens the TUI modal', async ({ page }) => {
+        await gotoFreshSession(page);
+        const inp = await waitInputReady(page);
+        // Spin up a tiny inline-TUI emulator: ~80 cursor moves should cross
+        // the promotion threshold (60).
+        // Each \\x1B[3A;3G moves the cursor; the sleep keeps the process
+        // alive so we can observe the TUI modal in the DOM.
+        await inp.fill('for i in $(seq 1 80); do printf "\\033[1A\\033[3G"; done; sleep 3');
+        await inp.press('Enter');
+        // Wait for promotion (debounce + modal open).
+        await page.waitForTimeout(2000);
+        const modal = await page.locator('.tui-modal-overlay').count();
+        expect(modal).toBe(1);
+        // Wait for the sleep to finish so the cell closes cleanly and
+        // doesn't leak into the next test.
+        await page.waitForTimeout(3000);
+    });
+
     // Activating a venv must NOT leak the "(venv) " prompt prefix into
     // subsequent cell output. VIRTUAL_ENV_DISABLE_PROMPT=1 in our bashrc
     // prevents the venv activate script from mutating PS1.
