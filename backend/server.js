@@ -617,6 +617,12 @@ function attachPtyHandlers(session) {
                 // started" placeholder instead of the noisy bootstrap echo.
                 const outerCell = session.cells.find(c => c.id === session.sshOuterCellId);
                 if (outerCell) outerCell.usedSshSession = true;
+                // Broadcast: SSH Path B is now active. Frontend will start
+                // forwarding control keys (Ctrl+C/D/L) from the chat input
+                // to the remote PTY when no cell is currently running.
+                for (const ws of session.clients) ws.send(JSON.stringify({
+                    type: 'ssh_state', sshActive: true, sshHost: session.sshHost,
+                }));
             }
             debugLog(`[CELL_CLOSE] session ${sessionId} cellId=${session.activeCellId} which=${finishMatch.which}`);
             const toSend = session.tailBuf.substring(session.sentPos, finishMatch.firstIndex);
@@ -693,6 +699,11 @@ function attachPtyHandlers(session) {
             if (session.sshActive && finishMatch.which === 'local') {
                 debugLog(`[SSH_END] session ${sessionId} outer ssh exited`);
                 clearSshState(session);
+                // Broadcast: back to normal local mode. Chat input stops
+                // forwarding control keys.
+                for (const ws of session.clients) ws.send(JSON.stringify({
+                    type: 'ssh_state', sshActive: false, sshHost: null,
+                }));
             }
             session.activeCellId = null;
             session.tailBuf = session.tailBuf.substring(finishMatch.matchEnd);
@@ -816,9 +827,14 @@ wss.on('connection', (ws, req) => {
         s.clients.add(ws);
         debugLog(`[WS_JOIN] session ${activeId}`);
         if (msg.cols && msg.rows) { ws.requestedCols = msg.cols; ws.requestedRows = msg.rows; handleResize(s); }
-        ws.send(JSON.stringify({ 
-            type: 'session_init', sessionId: s.id, pwd: s.pwd, cells: s.cells, 
-            isTuiActive: s.isTuiActive, activeCellId: s.activeCellId 
+        ws.send(JSON.stringify({
+            type: 'session_init', sessionId: s.id, pwd: s.pwd, cells: s.cells,
+            isTuiActive: s.isTuiActive, activeCellId: s.activeCellId,
+            // SSH Path B state — frontend uses sshActive to forward
+            // control keys (Ctrl+C/D/L) from the chat input to the remote
+            // shell PTY when the user is idle between remote commands.
+            sshActive: !!s.sshActive && s.sshState === 'active',
+            sshHost: s.sshHost || null,
         }));
         if (s.headlessTerminal && s.serializeAddon) {
             ws.send(JSON.stringify({ type: 'sync', cellId: s.activeCellId, data: s.serializeAddon.serialize() }));
