@@ -181,6 +181,53 @@ bypass the keystroke forwarding).
 This is also what makes `cat` (no args) usable: type lines, press Ctrl+D
 to send EOF, cat exits cleanly.
 
+## SSH integration ("on by default")
+
+When the user runs `ssh user@host` (interactive, not single-shot, not
+`--no-termbook`), Termbook lets SSH connect normally, then once the
+remote prompt is visible, it injects a salted shell-integration snippet
+into the remote shell. From that point each remote command becomes its
+own Termbook cell — with REAL remote pwd, git branch, exit code,
+host, etc.
+
+Backend state machine (`backend/server.js`, SSH helpers ~line 297):
+
+```
+idle ──[ssh cmd submitted]──> pending
+pending ──[remote prompt + 600ms idle]──> injecting
+injecting ──[salted marker arrives]──> active
+active ──[which='ssh' finish]──> next remote cell
+active ──[which='local' finish]──> idle (ssh process exited)
+```
+
+The injected snippet (built by `backend/ssh.js:buildRemoteIntegration`)
+installs `__tb_remote_prompt()` as the remote shell's PROMPT_COMMAND
+(bash) and/or precmd_functions[] (zsh). The function emits OSC 133 / OSC
+7 / OSC 1338 markers with a per-SSH salt. The parser is given
+`[localSalt, sshSalt]`; the `which` field of the finish match tells the
+server whether the close was for the local shell (outer ssh exiting) or
+the remote shell (a remote command finishing).
+
+While `sshActive`, the parser is invoked with `allowUnsalted: false` —
+this is what makes the SSH integration safe: a malicious or buggy remote command
+emitting an unsalted `\033]133;D;0\007` cannot close cells.
+
+Each remote-issued cell carries `remoteHost` so the frontend renders an
+orange `🔌 user@host` chip in `cell-header-right`, distinct from the
+cyan pwd-breadcrumb and purple git chip.
+
+Opt-out per command: `ssh --no-termbook host` (or `--no-tb`) keeps the
+cell in the pre-integration SSH mode mode (one big cell, full passthrough). Single-shot
+`ssh host 'cmd'` is detected and never injected. Nested ssh: only the
+outermost gets integration; inner is treated as a normal remote command.
+
+If injection doesn't produce a salted marker within 8 s
+(non-bash/zsh remote shell, output suppressed, etc.), `sshState='failed'`
+and Termbook degrades to today's "pre-integration" behavior automatically.
+
+Tested by `frontend/tests/e2e/08_ssh_session.spec.mjs` (10 tests
+including the regression test for unsalted-marker spoofing).
+
 ## Scroll behavior
 
 Two interacting requirements:

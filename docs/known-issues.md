@@ -142,6 +142,61 @@ nothing for a while, then a burst.
 WebSocket traffic per cell and the SIGWINCH-storm prevention work
 became delicate. Not worth touching without a real complaint.
 
+### the SSH integration: cosmetic prompt residue in remote cell snapshots
+
+When the SSH integration is active, each remote-issued cell's snapshot tail often
+contains an extra line or two of the remote shell's prompt re-rendering
+(e.g. p10k's right-side prompt drawing). The cell's exit code, pwd, and
+git chip are all correct; this is purely visual noise at the bottom of
+the snapshot.
+
+**Cause**: `__tb_remote_prompt` runs as `precmd` / `PROMPT_COMMAND` BEFORE
+the next prompt prints, but the remote shell typically also has its own
+prompt-drawing logic that writes a line of output. We capture the snapshot
+at the next salted finish marker, which includes any output the remote
+shell wrote between the previous command and our marker.
+
+**Not fixed because**: stripping prompt artifacts heuristically risks
+chopping legitimate trailing output. Cosmetic; ignored for v1.
+
+### the SSH integration: per-SSH salt is plaintext on the remote
+
+The `sshSalt` is injected into the remote shell's environment as part of
+PROMPT_COMMAND. Any process on the remote that can read the shell's
+environment (e.g. `cat /proc/$$/environ` on Linux, or `ps eww` viewing
+your own process env) can read the salt and forge cell-close markers.
+
+**Threat model**: Termbook targets local / dev / self-owned hosts. If you
+SSH into a truly untrusted shared host, use `ssh --no-termbook` to disable
+the integration.
+
+**Same model** as the local salt — also plaintext in `PROMPT_COMMAND` of
+your local bash; any local process can read it. Documented for
+completeness.
+
+### the SSH integration: nested SSH only injects on the outermost
+
+`ssh host1`, then on host1 `ssh host2` — only host1 gets the salted
+integration. The inner ssh is treated as a normal remote command from
+Termbook's POV. Inner commands run inside one wrap-cell with no
+per-command boundaries.
+
+**Could be fixed** by detecting `ssh` commands typed INSIDE an active
+the SSH integration session and re-running the inject machinery for the inner shell.
+Punted for v1; not a common-enough workflow to justify the state-machine
+complexity.
+
+### the SSH integration: integration fails silently after 8 seconds
+
+If the remote shell isn't bash or zsh, or has output suppression that
+swallows our salted printf, the inject won't yield a salted marker.
+`SSH_INJECT_TIMEOUT` fires and `sshState='failed'`. The session degrades
+to the pre-feature behavior (one big cell, unsalted markers from remote
+may close cells). No user-visible error.
+
+**Should** surface this as a small UI indicator (e.g. "integration off"
+chip with a tooltip explaining how to retry). Not done in v1.
+
 ---
 
 ## Recently resolved (kept here briefly for context)
@@ -173,6 +228,22 @@ Resolved by passthrough mode (see [decisions.md#passthrough](decisions.md#passth
 Whenever a non-alt-screen command is running, the chat input forwards
 every keystroke (including Enter, arrows, Ctrl+C/D, etc.) to the
 running command's PTY.
+
+### ✅ SSH used to be "pre-integration" with wrong chip data
+
+Used to be: `ssh user@host` worked thanks to remote shells emitting OSC
+133;D markers (p10k, atuin) — but those markers were unsalted, so the
+parser fell back to the "anyExitRegex" path. Each remote command became
+a cell with LOCAL pwd / LOCAL git branch chips, even though the cell ran
+remotely. Tab completion and ArrowUp history also used local state.
+Worst of all: any remote command could spoof cell boundaries by emitting
+its own `\033]133;D;0\007`.
+
+Resolved by the SSH integration integration (see
+[decisions.md#ssh-path-b](decisions.md#ssh-path-b)) — Termbook now
+auto-injects a salted shell-integration into the remote shell, so each
+remote command becomes a proper cell with REAL remote pwd / git / exit.
+Unsalted markers are explicitly rejected while in an active SSH session.
 
 ---
 
