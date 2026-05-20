@@ -433,6 +433,74 @@ test.describe('regression', () => {
         await ctx.close();
     });
 
+    // Full-screen workspace mode: Cmd+Shift+F (or a button or the palette)
+    // hides the sidebar + top-header, expanding the cell area to fill the
+    // entire viewport. Must round-trip cleanly via all three triggers.
+    test('Cmd+Shift+F hides sidebar and top header', async ({ page }) => {
+        await gotoFreshSession(page);
+        await waitInputReady(page);
+        const before = await page.evaluate(() => ({
+            sidebar: getComputedStyle(document.querySelector('.sidebar')).display,
+            topHeader: getComputedStyle(document.querySelector('.top-header')).display,
+        }));
+        expect(before.sidebar).not.toBe('none');
+        expect(before.topHeader).not.toBe('none');
+
+        await page.locator('.chat-input-wrapper textarea').first().focus();
+        await page.keyboard.press('Meta+Shift+f');
+        await page.waitForTimeout(400);
+
+        const after = await page.evaluate(() => ({
+            sidebar: getComputedStyle(document.querySelector('.sidebar')).display,
+            topHeader: getComputedStyle(document.querySelector('.top-header')).display,
+            exitBtn: document.querySelectorAll('.exit-fullscreen-floating').length,
+        }));
+        expect(after.sidebar).toBe('none');
+        expect(after.topHeader).toBe('none');
+        expect(after.exitBtn).toBe(1);
+
+        // Toggle back via keyboard.
+        await page.keyboard.press('Meta+Shift+f');
+        await page.waitForTimeout(400);
+        const restored = await page.evaluate(() => ({
+            sidebar: getComputedStyle(document.querySelector('.sidebar')).display,
+            exitBtn: document.querySelectorAll('.exit-fullscreen-floating').length,
+        }));
+        expect(restored.sidebar).not.toBe('none');
+        expect(restored.exitBtn).toBe(0);
+    });
+
+    test('maximize button in header toggles full screen', async ({ page }) => {
+        await gotoFreshSession(page);
+        await waitInputReady(page);
+        await page.locator('.maximize-btn').click();
+        await page.waitForTimeout(400);
+        expect(await page.evaluate(() =>
+            getComputedStyle(document.querySelector('.sidebar')).display
+        )).toBe('none');
+        // Floating exit button can take us back.
+        await page.locator('.exit-fullscreen-floating').click();
+        await page.waitForTimeout(400);
+        expect(await page.evaluate(() =>
+            getComputedStyle(document.querySelector('.sidebar')).display
+        )).not.toBe('none');
+    });
+
+    test('full-screen preference persists across reload', async ({ page }) => {
+        await gotoFreshSession(page);
+        await waitInputReady(page);
+        await page.locator('.maximize-btn').click();
+        await page.waitForTimeout(400);
+        await page.reload({ waitUntil: 'networkidle' });
+        await page.waitForTimeout(1500);
+        const maxAfterReload = await page.evaluate(() =>
+            getComputedStyle(document.querySelector('.sidebar')).display === 'none'
+        );
+        expect(maxAfterReload).toBe(true);
+        // Cleanup so we don't pollute subsequent tests.
+        await page.evaluate(() => localStorage.setItem('termbook_maximized', '0'));
+    });
+
     test('Cmd+K palette dismisses with Escape', async ({ page }) => {
         await gotoFreshSession(page);
         const inp = await waitInputReady(page);
