@@ -307,6 +307,39 @@ test.describe('alt-screen TUIs', () => {
         await waitForIdle(page, 10000);
     });
 
+    test('command that briefly enters alt-screen but produces main-screen output keeps its snapshot', async ({ page }, testInfo) => {
+        // Regression: brew/npm/git push etc. open the alt-screen for a
+        // progress display, exit alt-screen, then print summary output
+        // to the main screen. That summary IS the output the user wants
+        // to see — must NOT be replaced with "Interactive session ended"
+        // placeholder.
+        //
+        // We simulate this with a shell script that:
+        //   1. prints some output (BEFORE_TUI_MARKER)
+        //   2. enters alt-screen (\e[?1049h), draws something briefly
+        //   3. exits alt-screen (\e[?1049l)
+        //   4. prints more output (AFTER_TUI_MARKER) — the "summary"
+        //
+        // The cell's snapshot must contain AFTER_TUI_MARKER (and
+        // probably BEFORE_TUI_MARKER too, depending on terminal-buffer
+        // restoration), NOT just "Interactive session ended".
+        await gotoFreshSession(page);
+        const script = `printf 'BEFORE_TUI_MARKER\\n'; printf '\\033[?1049h'; printf 'fake progress bar inside altscreen'; sleep 0.4; printf '\\033[?1049l'; printf 'AFTER_TUI_MARKER\\nFINAL_LINE\\n'`;
+        await startCommand(page, `bash -c "${script.replace(/"/g, '\\"')}"`);
+        await waitForIdle(page, 8000);
+        await shot(page, testInfo, '01_after_command');
+
+        const last = await lastCellInfo(page);
+        // The snapshot must contain the SUMMARY output that came after
+        // the alt-screen exited. If we see "Interactive session ended"
+        // and no AFTER_TUI_MARKER, the bug is back: we mistook the
+        // brief-altscreen command for a real TUI.
+        expect(last.output, 'snapshot lost the post-altscreen output').toContain('AFTER_TUI_MARKER');
+        expect(last.output, 'snapshot lost the post-altscreen output').toContain('FINAL_LINE');
+        // Must NOT show the TUI placeholder for this kind of cell.
+        expect(last.output).not.toContain('Interactive session ended');
+    });
+
     test('cat (not a TUI) does NOT trigger modal promotion', async ({ page }, testInfo) => {
         // The content-based detection should NOT trigger on commands that
         // just stream text. If `cat` (or `ls`, `grep`, `echo`) accidentally
