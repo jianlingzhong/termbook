@@ -451,17 +451,26 @@ test.describe('SSH session — on by default', () => {
         await loginSsh(page);
         await shot(page, testInfo, '01_top_chip');
 
-        // After SSH active: chip visible with host text, sidebar indicator present.
+        // After SSH active: chip visible with host text, sidebar indicator
+        // present, AND the prompt-prefix badge next to the input box shows
+        // the host (most important — it's right where the user types).
         const after = await page.evaluate(() => ({
             topChip: !!document.querySelector('.top-header-ssh-chip'),
             topChipText: document.querySelector('.top-header-ssh-chip')?.innerText,
             sidebarIndicator: document.querySelectorAll('.session-ssh-indicator').length,
             sidebarLi: document.querySelectorAll('.sidebar li.in-ssh').length,
+            inputPrefixSsh: !!document.querySelector('.pwd-prompt-prefix-ssh'),
+            inputPrefixHost: document.querySelector('.pwd-prompt-prefix-ssh-host')?.innerText,
+            inputWrapperSsh: !!document.querySelector('.chat-input-wrapper.is-ssh'),
         }));
         expect(after.topChip).toBe(true);
         expect(after.topChipText).toContain('127.0.0.1'); // loopback host
         expect(after.sidebarIndicator).toBeGreaterThanOrEqual(1);
         expect(after.sidebarLi).toBeGreaterThanOrEqual(1);
+        // The input-side badge is the one the user looks at when typing.
+        expect(after.inputPrefixSsh).toBe(true);
+        expect(after.inputPrefixHost).toContain('127.0.0.1');
+        expect(after.inputWrapperSsh).toBe(true);
 
         // After exit: chip + indicator gone.
         const inp = page.locator('.chat-input-wrapper textarea').first();
@@ -472,8 +481,12 @@ test.describe('SSH session — on by default', () => {
         const ended = await page.evaluate(() => ({
             topChip: !!document.querySelector('.top-header-ssh-chip'),
             sidebarIndicator: document.querySelectorAll('.session-ssh-indicator').length,
+            inputPrefixSsh: !!document.querySelector('.pwd-prompt-prefix-ssh'),
+            inputWrapperSsh: !!document.querySelector('.chat-input-wrapper.is-ssh'),
         }));
         expect(ended.topChip).toBe(false);
         expect(ended.sidebarIndicator).toBe(0);
+        expect(ended.inputPrefixSsh).toBe(false);
+        expect(ended.inputWrapperSsh).toBe(false);
     });
 });
