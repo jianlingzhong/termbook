@@ -432,59 +432,58 @@ test.describe('SSH session — on by default', () => {
         await inp.fill('');
     });
 
-    test('N: top-header SSH chip + sidebar SSH indicator surface session state', async ({ page }, testInfo) => {
-        // Two visibility checks: the always-visible orange chip in the top
-        // header (next to the pwd breadcrumb) showing the SSH host, AND the
-        // small Server-icon indicator in the sidebar session list so users
-        // with multiple sessions can tell which ones are remote without
-        // switching.
+    test('N: input-prefix host badge + sidebar SSH indicator surface session state', async ({ page }, testInfo) => {
+        // Three SSH host indicators exist in the UI:
+        //   1. Input-prefix badge — right where the user types, primary
+        //      "this goes remote" signal. Most important.
+        //   2. Sidebar Server icon — for telling sessions apart at a glance.
+        //   3. Per-cell SSH chip — context when scrolling through history.
+        // Deliberately NOT in the top header — that was duplicate noise.
         await gotoFreshSession(page);
 
-        // Before SSH: no top-header chip, no sidebar indicator.
+        // Before SSH: no indicators anywhere.
         const before = await page.evaluate(() => ({
-            topChip: !!document.querySelector('.top-header-ssh-chip'),
             sidebarIndicator: document.querySelectorAll('.session-ssh-indicator').length,
+            inputPrefixSsh: !!document.querySelector('.pwd-prompt-prefix-ssh'),
+            // The top-header chip was deliberately removed; assert it does
+            // not exist so anyone reintroducing it has to rewrite this test.
+            topChipExists: !!document.querySelector('.top-header-ssh-chip'),
         }));
-        expect(before.topChip).toBe(false);
         expect(before.sidebarIndicator).toBe(0);
+        expect(before.inputPrefixSsh).toBe(false);
+        expect(before.topChipExists).toBe(false);
 
         await loginSsh(page);
-        await shot(page, testInfo, '01_top_chip');
+        await shot(page, testInfo, '01_indicators_after_login');
 
-        // After SSH active: chip visible with host text, sidebar indicator
-        // present, AND the prompt-prefix badge next to the input box shows
-        // the host (most important — it's right where the user types).
         const after = await page.evaluate(() => ({
-            topChip: !!document.querySelector('.top-header-ssh-chip'),
-            topChipText: document.querySelector('.top-header-ssh-chip')?.innerText,
             sidebarIndicator: document.querySelectorAll('.session-ssh-indicator').length,
             sidebarLi: document.querySelectorAll('.sidebar li.in-ssh').length,
             inputPrefixSsh: !!document.querySelector('.pwd-prompt-prefix-ssh'),
             inputPrefixHost: document.querySelector('.pwd-prompt-prefix-ssh-host')?.innerText,
             inputWrapperSsh: !!document.querySelector('.chat-input-wrapper.is-ssh'),
+            topChipExists: !!document.querySelector('.top-header-ssh-chip'),
         }));
-        expect(after.topChip).toBe(true);
-        expect(after.topChipText).toContain('127.0.0.1'); // loopback host
-        expect(after.sidebarIndicator).toBeGreaterThanOrEqual(1);
-        expect(after.sidebarLi).toBeGreaterThanOrEqual(1);
-        // The input-side badge is the one the user looks at when typing.
+        // Input-prefix badge — the primary signal.
         expect(after.inputPrefixSsh).toBe(true);
         expect(after.inputPrefixHost).toContain('127.0.0.1');
         expect(after.inputWrapperSsh).toBe(true);
+        // Sidebar indicator — secondary, for orientation.
+        expect(after.sidebarIndicator).toBeGreaterThanOrEqual(1);
+        expect(after.sidebarLi).toBeGreaterThanOrEqual(1);
+        // Top-header chip — deliberately absent.
+        expect(after.topChipExists).toBe(false);
 
-        // After exit: chip + indicator gone.
         const inp = page.locator('.chat-input-wrapper textarea').first();
         await inp.focus();
         await inp.fill('exit');
         await inp.press('Enter');
         await waitForIdle(page, 10000);
         const ended = await page.evaluate(() => ({
-            topChip: !!document.querySelector('.top-header-ssh-chip'),
             sidebarIndicator: document.querySelectorAll('.session-ssh-indicator').length,
             inputPrefixSsh: !!document.querySelector('.pwd-prompt-prefix-ssh'),
             inputWrapperSsh: !!document.querySelector('.chat-input-wrapper.is-ssh'),
         }));
-        expect(ended.topChip).toBe(false);
         expect(ended.sidebarIndicator).toBe(0);
         expect(ended.inputPrefixSsh).toBe(false);
         expect(ended.inputWrapperSsh).toBe(false);

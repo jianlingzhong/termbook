@@ -19,12 +19,12 @@ Self-hosted, localhost-only. Open-source.
   REMOTE command becomes its own Termbook cell with the real remote pwd,
   git branch, and exit code. Tab in the chat input completes against the
   REMOTE filesystem (paths AND command names on PATH); Ctrl+D ends the
-  SSH session. While in an SSH session you see the remote host in THREE
-  places — orange chip in the top header, orange Server icon on the
-  sidebar session, and an orange `🖥 host ❯` badge replacing the prompt
-  prefix in the input box itself (so you never accidentally type a
-  command thinking it'll run locally). Append `--no-termbook` to opt out
-  per-command and get a plain passthrough terminal.
+  SSH session. While in SSH the host is shown in three deliberate places
+  — the input prompt prefix becomes an orange `🖥 host ❯` badge right
+  where you type (so you never accidentally type thinking you're local),
+  the sidebar marks the session with a Server icon, and each remote
+  cell carries an orange host chip in its header. Append `--no-termbook`
+  to opt out per-command and get a plain passthrough terminal.
 - TUIs (vim, top, htop) — anything that uses the alt-screen buffer — open in
   a full-screen modal that resizes the underlying PTY to fill the modal.
 - Interactive commands (gemini-cli, claude-cli, `cat`, `read`, Python REPL) run
