@@ -355,29 +355,92 @@ test.describe('SSH session — Path B by default', () => {
         await runRemote(page, 'rm -f /tmp/__tb_e2e_tab_a /tmp/__tb_e2e_tab_b /tmp/__tb_e2e_tab_c');
     });
 
-    test('L: Ctrl+D at empty chat input ends the SSH session (EOF to remote bash)', async ({ page }, testInfo) => {
+    test('L: Ctrl+D ends SSH cleanly + visible "exit" cell + 2nd ssh works', async ({ page }, testInfo) => {
+        // This test catches a class of bugs that bit us BAD in production:
+        //   1. Ctrl+D appeared to do nothing (no visible feedback).
+        //   2. The SSH host badge stayed visible after Ctrl+D, confusing
+        //      the user about what state they were in.
+        //   3. A 2nd `ssh ...` attempt hung forever because the FIRST
+        //      session's sshActive state was never cleared.
+        //
+        // The fix: Ctrl+D synthesizes a real `exit` cell submission. The
+        // user sees the cell appear (feedback), the backend runs it
+        // through the normal cell lifecycle (which has correct SSH state
+        // cleanup), and 2nd ssh works.
         await gotoFreshSession(page);
         await loginSsh(page);
         await runRemote(page, 'echo PRE_EOF_OK');
 
-        // Empty input, Ctrl+D — should send \x04 to remote PTY → remote bash exits.
+        // Snapshot BEFORE Ctrl+D so we can compare.
+        const beforeCtrlD = await page.evaluate(() => ({
+            sshChip: !!document.querySelector('.pwd-prompt-prefix-ssh'),
+            isSshClass: !!document.querySelector('.chat-input-wrapper.is-ssh'),
+            sidebarSsh: document.querySelectorAll('.sidebar li.in-ssh').length,
+        }));
+        expect(beforeCtrlD.sshChip).toBe(true);
+        expect(beforeCtrlD.isSshClass).toBe(true);
+        expect(beforeCtrlD.sidebarSsh).toBe(1);
+
         const inp = page.locator('.chat-input-wrapper textarea').first();
         await inp.focus();
         await inp.fill('');
         await page.keyboard.down('Control');
         await page.keyboard.press('KeyD');
         await page.keyboard.up('Control');
-        // Wait for ssh process to actually exit (remote bash EOF → ssh ends).
+        // Wait for the synthetic exit cell to actually close ssh.
         await waitForIdle(page, 10000);
         await shot(page, testInfo, '01_after_ctrl_d');
 
-        // Verify SSH is no longer active by running a command and checking
-        // it does NOT get the SSH chip.
+        // PRIMARY assertion: SSH state is FULLY cleared. Every indicator
+        // gone. If any of these stay true the bug is back.
+        const afterCtrlD = await page.evaluate(() => ({
+            sshChip: !!document.querySelector('.pwd-prompt-prefix-ssh'),
+            isSshClass: !!document.querySelector('.chat-input-wrapper.is-ssh'),
+            sidebarSsh: document.querySelectorAll('.sidebar li.in-ssh').length,
+            cells: Array.from(document.querySelectorAll('.notebook-cell')).map(c => c.querySelector('.read-only-command')?.textContent),
+            runningCells: document.querySelectorAll('.notebook-cell.active-cell').length,
+        }));
+        expect(afterCtrlD.sshChip).toBe(false);
+        expect(afterCtrlD.isSshClass).toBe(false);
+        expect(afterCtrlD.sidebarSsh).toBe(0);
+        expect(afterCtrlD.runningCells).toBe(0);
+        // VISIBLE feedback: an "exit" cell must have appeared.
+        expect(afterCtrlD.cells.some(c => c === 'exit')).toBe(true);
+
+        // Now run a local command — should NOT carry an SSH chip.
         await runCommand(page, 'echo POST_SSH');
-        const c = await inspectCells(page);
-        const last = c[c.length - 1];
-        expect(last.cmd).toBe('echo POST_SSH');
-        expect(last.sshChip).toBeNull();
+        const c1 = await inspectCells(page);
+        const last1 = c1[c1.length - 1];
+        expect(last1.cmd).toBe('echo POST_SSH');
+        expect(last1.sshChip).toBeNull();
+
+        // And critically: a 2ND SSH attempt must work. Previously the
+        // unsealed first-SSH state caused the 2nd ssh to spin forever.
+        await loginSsh(page); // throws on timeout — that's the regression we'd catch
+        const c2 = await inspectCells(page);
+        const lastSsh = c2.filter(x => x.sshChip).slice(-1)[0];
+        // After 2nd loginSsh, at least the new ssh cell is closed-as-active
+        // and we're in Path B again.
+        const after2nd = await page.evaluate(() => ({
+            sshChip: !!document.querySelector('.pwd-prompt-prefix-ssh'),
+        }));
+        expect(after2nd.sshChip).toBe(true);
+    });
+
+    test('L2: local prompt prefix shows actual hostname, not generic "termbook"', async ({ page }) => {
+        // User feedback: "better to be 'localhost'" (or actual hostname).
+        // The generic "termbook ❯" was meaningless and broke the parallel
+        // with the SSH prefix (which DOES show host). Both should be
+        // host-named.
+        await gotoFreshSession(page);
+        const prefix = await page.evaluate(() => document.querySelector('.pwd-prompt-prefix span')?.innerText);
+        // Should NOT contain the placeholder "termbook" text.
+        expect(prefix).not.toContain('termbook');
+        // Should end in the prompt arrow.
+        expect(prefix).toMatch(/❯\s*$/);
+        // Should contain SOMETHING that looks like a hostname (at least
+        // a word character before the arrow).
+        expect(prefix).toMatch(/[A-Za-z0-9]/);
     });
 
     test('M: Ctrl+C with content clears chat input AND forwards ^C to remote', async ({ page }, testInfo) => {
