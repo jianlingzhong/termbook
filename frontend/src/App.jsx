@@ -5,7 +5,7 @@ import { Terminal } from 'xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import 'xterm/css/xterm.css';
-import { TerminalSquare, Plus, Folder, Hash, X, ChevronDown, Maximize2, Minimize2 } from 'lucide-react';
+import { TerminalSquare, Plus, Folder, Hash, X, ChevronDown, Maximize2, Minimize2, Server } from 'lucide-react';
 import './index.css';
 
 function shortenPath(p) {
@@ -55,6 +55,10 @@ function App() {
   // remote terminal. Updated via session_init.sshActive and 'ssh_state'
   // WS messages from the backend.
   const [sessionSshActive, setSessionSshActive] = useState({});
+  // Companion to sessionSshActive: the remote host name (parsed from
+  // the ssh command at SSH_START time). Used for the always-visible top
+  // header SSH chip and the sidebar session indicator.
+  const [sessionSshHosts, setSessionSshHosts] = useState({});
   const [inputValue, setInputValue] = useState('');
   
   const sessionRunningRef = useRef({});
@@ -401,6 +405,7 @@ function App() {
     setSessionRunning(prev => { const n = { ...prev }; delete n[sessionId]; return n; });
     setSessionTuiStates(prev => { const n = { ...prev }; delete n[sessionId]; return n; });
     setSessionSshActive(prev => { const n = { ...prev }; delete n[sessionId]; return n; });
+    setSessionSshHosts(prev => { const n = { ...prev }; delete n[sessionId]; return n; });
     if (activeSessionId === sessionId) {
         setActiveSessionId(prevId => {
             const remaining = sessions.filter(s => s.id !== sessionId);
@@ -492,11 +497,13 @@ function App() {
                 if (msg.isTuiActive) setSessionTuiStates(prev => ({ ...prev, [sessionId]: { cellId: msg.activeCellId ?? msg.cellId } }));
                 // SSH Path B state on reconnect / fresh join.
                 setSessionSshActive(prev => ({ ...prev, [sessionId]: !!msg.sshActive }));
+                setSessionSshHosts(prev => ({ ...prev, [sessionId]: msg.sshHost || null }));
             } else if (msg.type === 'ssh_state') {
                 // Backend transitions: SSH session became active (after
                 // injection) or ended (user typed `exit`). Drives whether
                 // control keys forward to remote when chat input is idle.
                 setSessionSshActive(prev => ({ ...prev, [sessionId]: !!msg.sshActive }));
+                setSessionSshHosts(prev => ({ ...prev, [sessionId]: msg.sshHost || null }));
             } else if (msg.type === 'new_cell') {
                 const newCellId = msg.cellId || `cell-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
                 setSessionCells(prev => {
@@ -875,10 +882,20 @@ function App() {
         <ul>{sessions.map(s => {
           const sid = String(s.id);
           const label = sid.length > 18 ? `${sid.slice(0, 9)}…${sid.slice(-4)}` : sid;
+          const inSsh = sessionSshActive[s.id];
+          const sshHost = sessionSshHosts[s.id];
           return (
-            <li key={s.id} data-session-id={s.id} className={activeSessionId === s.id ? 'active' : ''} onClick={() => { switchSession(s.id); refocusInput(); }} title={sid}>
+            <li key={s.id} data-session-id={s.id} className={`${activeSessionId === s.id ? 'active' : ''}${inSsh ? ' in-ssh' : ''}`} onClick={() => { switchSession(s.id); refocusInput(); }} title={inSsh && sshHost ? `${sid} (SSH: ${sshHost})` : sid}>
               <Hash size={14}/>
               <span style={{ flex: 1 }}>{label}</span>
+              {/* Small SSH glyph + truncated host so at-a-glance you can
+                  identify which sessions are currently inside an SSH
+                  session, without switching between them. */}
+              {inSsh && (
+                <span className="session-ssh-indicator" title={sshHost ? `SSH: ${sshHost}` : 'SSH active'}>
+                  <Server size={11} />
+                </span>
+              )}
               <button
                 className="session-delete-btn"
                 title="Delete session"
@@ -894,6 +911,16 @@ function App() {
              <Folder size={14} color="var(--accent-cyan)" />
              <span className="pwd-breadcrumb-text">{shortenPath(sessionPwds[activeSessionId] || '~')}</span>
            </div>
+           {/* SSH session indicator: always-visible chip next to pwd, so the
+               user has unambiguous context that they're operating on a remote
+               host (the pwd shown is the REMOTE pwd, etc.). Only renders
+               when the active session is in an active Path B SSH session. */}
+           {sessionSshActive[activeSessionId] && sessionSshHosts[activeSessionId] && (
+             <div className="top-header-ssh-chip" title={`SSH session active on ${sessionSshHosts[activeSessionId]}`}>
+               <Server size={13} />
+               <span>{sessionSshHosts[activeSessionId]}</span>
+             </div>
+           )}
            <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
              {(sessionCells[activeSessionId] || []).length > 500 && (
                <div className="memory-warning-badge" title="High memory usage may slow down the UI">MEMORY HIGH</div>

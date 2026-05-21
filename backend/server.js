@@ -339,8 +339,13 @@ function createSession(sessionId) {
 // session `sshState='failed'` and fall back to today's "leaky Path B"
 // behavior (cell stays open, unsalted markers may close things).
 
-const SSH_INJECT_IDLE_MS = 600;       // quiet window after prompt before we inject
-const SSH_INJECT_TIMEOUT_MS = 8000;   // give up trying to inject after this many ms
+const SSH_INJECT_IDLE_MS = 600;        // quiet window after prompt before we inject
+// 12s is generous enough to cover slow remote hosts (high-latency links,
+// remote shells that need to load p10k themes / oh-my-zsh plugins) while
+// still being short enough that a truly broken inject (non-bash/zsh
+// shell, output suppression) doesn't leave the user staring at a frozen
+// cell for an uncomfortable amount of time.
+const SSH_INJECT_TIMEOUT_MS = 12000;
 
 function clearSshState(session) {
   if (session.sshIdleTimer) { clearTimeout(session.sshIdleTimer); session.sshIdleTimer = null; }
@@ -605,8 +610,12 @@ function attachPtyHandlers(session) {
             //
             // We deliberately DON'T treat this as a real "command finished" —
             // we still close the outer cell, then transition to 'active'.
-            if (session.sshState === 'injecting' && finishMatch.which === 'ssh') {
-                debugLog(`[SSH_INJECT_OK] session ${sessionId} — outer cell ${session.activeCellId} closes, transitioning to active`);
+            // Allow the late-arrival case: a salted marker that comes AFTER
+            // SSH_INJECT_TIMEOUT_MS fired (sshState='failed') still triggers
+            // the active transition. The user gets full Path B even if the
+            // first prompt took longer than expected.
+            if ((session.sshState === 'injecting' || session.sshState === 'failed') && finishMatch.which === 'ssh') {
+                debugLog(`[SSH_INJECT_OK] session ${sessionId} (was ${session.sshState}) — outer cell ${session.activeCellId} closes, transitioning to active`);
                 session.sshState = 'active';
                 if (session.sshIdleTimer) { clearTimeout(session.sshIdleTimer); session.sshIdleTimer = null; }
                 // Update remote pwd from the integration's first emission.
