@@ -292,16 +292,19 @@ Used to be: the only indicator that the top-of-screen pwd was REMOTE
 was the per-cell SSH chip on the right edge of each cell. With multiple
 sessions in the sidebar you couldn't tell which were remote without
 clicking through. And while typing in the chat input, your eyes were on
-the input box but the only signal was up in the header — easy to type
-a command thinking you were local.
+the input box but no signal was anywhere near where the cursor was.
 
-Resolved by adding the host badge in THREE places (all orange):
-(a) top-header chip next to the pwd breadcrumb,
-(b) sidebar Server-icon + left border on sessions inside SSH,
-(c) **input prompt prefix** — the generic cyan `termbook ❯` is replaced
-    with orange `🖥 host ❯` directly to the left of the typed text, with
-    the input wrapper border tinted orange too. This last one is the
-    safety net — it sits exactly where the user's eyes are when typing.
+Resolved by showing the host in THREE deliberate places (all orange,
+each answering a different question — see
+[decisions.md#ssh-visibility](decisions.md#ssh-visibility)):
+(a) **input prompt prefix** — replaces `termbook ❯` with `🖥 host ❯`
+    right where the user types; primary safety signal.
+(b) sidebar Server icon + orange left border — tells sessions apart.
+(c) per-cell SSH chip — context when scrolling through history.
+
+A fourth indicator (top-header chip) was tried for one commit then
+removed: with the input-prefix badge in place, a header chip just
+duplicates information ~200px above with no new value.
 
 ### ✅ First-token Tab completion didn't work for remote commands
 
