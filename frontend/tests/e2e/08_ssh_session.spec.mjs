@@ -405,4 +405,49 @@ test.describe('SSH session — on by default', () => {
         expect(last.sshChip).toBeTruthy();
         expect(last.output).toContain('STILL_REMOTE');
     });
+
+    test('N: top-header SSH chip + sidebar SSH indicator surface session state', async ({ page }, testInfo) => {
+        // Two visibility checks: the always-visible orange chip in the top
+        // header (next to the pwd breadcrumb) showing the SSH host, AND the
+        // small Server-icon indicator in the sidebar session list so users
+        // with multiple sessions can tell which ones are remote without
+        // switching.
+        await gotoFreshSession(page);
+
+        // Before SSH: no top-header chip, no sidebar indicator.
+        const before = await page.evaluate(() => ({
+            topChip: !!document.querySelector('.top-header-ssh-chip'),
+            sidebarIndicator: document.querySelectorAll('.session-ssh-indicator').length,
+        }));
+        expect(before.topChip).toBe(false);
+        expect(before.sidebarIndicator).toBe(0);
+
+        await loginSsh(page);
+        await shot(page, testInfo, '01_top_chip');
+
+        // After SSH active: chip visible with host text, sidebar indicator present.
+        const after = await page.evaluate(() => ({
+            topChip: !!document.querySelector('.top-header-ssh-chip'),
+            topChipText: document.querySelector('.top-header-ssh-chip')?.innerText,
+            sidebarIndicator: document.querySelectorAll('.session-ssh-indicator').length,
+            sidebarLi: document.querySelectorAll('.sidebar li.in-ssh').length,
+        }));
+        expect(after.topChip).toBe(true);
+        expect(after.topChipText).toContain('127.0.0.1'); // loopback host
+        expect(after.sidebarIndicator).toBeGreaterThanOrEqual(1);
+        expect(after.sidebarLi).toBeGreaterThanOrEqual(1);
+
+        // After exit: chip + indicator gone.
+        const inp = page.locator('.chat-input-wrapper textarea').first();
+        await inp.focus();
+        await inp.fill('exit');
+        await inp.press('Enter');
+        await waitForIdle(page, 10000);
+        const ended = await page.evaluate(() => ({
+            topChip: !!document.querySelector('.top-header-ssh-chip'),
+            sidebarIndicator: document.querySelectorAll('.session-ssh-indicator').length,
+        }));
+        expect(ended.topChip).toBe(false);
+        expect(ended.sidebarIndicator).toBe(0);
+    });
 });
