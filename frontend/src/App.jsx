@@ -911,16 +911,11 @@ function App() {
              <Folder size={14} color="var(--accent-cyan)" />
              <span className="pwd-breadcrumb-text">{shortenPath(sessionPwds[activeSessionId] || '~')}</span>
            </div>
-           {/* SSH session indicator: always-visible chip next to pwd, so the
-               user has unambiguous context that they're operating on a remote
-               host (the pwd shown is the REMOTE pwd, etc.). Only renders
-               when the active session is in an active Path B SSH session. */}
-           {sessionSshActive[activeSessionId] && sessionSshHosts[activeSessionId] && (
-             <div className="top-header-ssh-chip" title={`SSH session active on ${sessionSshHosts[activeSessionId]}`}>
-               <Server size={13} />
-               <span>{sessionSshHosts[activeSessionId]}</span>
-             </div>
-           )}
+           {/* SSH host indicator deliberately NOT shown here — the input
+               prefix badge (right where the user types) plus the sidebar
+               Server icon (for orientation across sessions) plus the
+               per-cell SSH chip (for scroll-back context) are enough.
+               A top-header chip just duplicates the input prefix. */}
            <div style={{display:'flex', gap:'8px', alignItems:'center'}}>
              {(sessionCells[activeSessionId] || []).length > 500 && (
                <div className="memory-warning-badge" title="High memory usage may slow down the UI">MEMORY HIGH</div>
