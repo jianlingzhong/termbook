@@ -18,13 +18,15 @@ what not to do, where the traps are, and what "done" looks like.
 3. The test suites that matter are:
    - `frontend/tests/visual/*.spec.mjs` (~40 tests) — fast functional +
      motion regressions. Run with `npm run test:visual` (~3 min).
-   - `frontend/tests/e2e/*.spec.mjs` (~59 tests, including 16 SSH Path B
+   - `frontend/tests/e2e/*.spec.mjs` (~60 tests, including 16 SSH Path B
      tests) — full human-workflow E2E with screenshots, video, pixel
      goldens. Run with `npm run test:e2e` (~6 min). The SSH suite needs
      a userspace sshd on 127.0.0.1:2222 — `tests/e2e/ssh-global-setup.mjs`
      handles spinning it up on first run and reuses it on subsequent runs.
    - `npm run test:all` runs both.
-   - **Always 99/99 green** before you claim done.
+   - **Always 100/100 green** before you claim done (1 of the e2e tests
+     skips when WebGL is unavailable, so headless without GPU shows
+     99 passed + 1 skipped; real environments run all 100).
    - The legacy `frontend/tests/*.spec.{js,ts}` is abandoned cruft
      — do not run or modify it.
 4. Before claiming "done": `npm run test:all` must pass green. Show the
