@@ -271,6 +271,47 @@ when `sessionSshActive[id]`, Ctrl+D-on-empty sends `\x04` to the remote
 PTY (EOFs the remote shell → ssh exits); Ctrl+C sends `\x03` (clears any
 partial line on remote) AND clears the chat input locally.
 
+### ✅ Remote cells had trailing prompt-redraw noise in snapshots
+
+Used to be: every the SSH integration cell's snapshot included 1-2 lines of the remote
+shell's next-prompt drawing (`~ user@host` + `❯`) because the headless
+terminal captured everything through ~300ms after the salted finish
+marker, by which time p10k had redrawn the next prompt. Visual noise
+made the notebook look messy.
+
+Resolved by frontend snapshot trimming (see
+[decisions.md#ssh-snapshot-trim](decisions.md#ssh-snapshot-trim)). The
+`trimSnapshotRows` helper now strips trailing rows that are recognizably
+prompt-only (require a STRONG signal — Powerline glyph, user@host, or a
+prompt char like ❯/$/#/% — and every other byte must belong to a known
+prompt fragment). NBSP padding is normalized before the heuristics run.
+
+### ✅ No always-visible signal that current session is inside SSH
+
+Used to be: the only indicator that the top-of-screen pwd was REMOTE
+was the per-cell SSH chip on the right edge of each cell. With multiple
+sessions in the sidebar you couldn't tell which were remote without
+clicking through.
+
+Resolved by adding (a) an always-visible orange `🖥 host` chip next to
+the top-header pwd breadcrumb, and (b) a small orange Server icon +
+left border on sidebar session entries that are inside an active SSH
+session. Both driven by per-session `sessionSshActive` / `sessionSshHosts`
+state populated from `ssh_state` WS broadcasts.
+
+### ✅ First-token Tab completion didn't work for remote commands
+
+Used to be: `gi<Tab>` (or any partial command name) returned nothing on
+remote because `__tb_complete` only globbed `gi*` in remote cwd. Path
+completion worked; command completion didn't.
+
+Resolved by extending the remote integration's `__tb_complete` function
+to accept a `kind` argument ('cmd' or 'path'). For 'cmd' it walks `$PATH`
+collecting executables plus merges shell builtins/aliases/functions
+(bash via `compgen -bafk`, zsh via `${(k)builtins}` etc.). Backend's
+`requestRemoteCompletion` detects first-token (no spaces in input) and
+sets kind='cmd' automatically. `gi<Tab>` → `git`, `ec<Tab>` → `echo`.
+
 ---
 
 ## Repo hygiene issues (planned cleanup, not yet done)
