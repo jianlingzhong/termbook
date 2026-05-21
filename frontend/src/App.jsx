@@ -7,6 +7,7 @@ import { SerializeAddon } from '@xterm/addon-serialize';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { TerminalSquare, Plus, Folder, Hash, X, ChevronDown, Maximize2, Minimize2, Server } from 'lucide-react';
+import { tbLog } from './debug';
 import './index.css';
 
 function shortenPath(p) {
@@ -458,12 +459,19 @@ function App() {
     const { terminal, fitAddon } = entry;
     let didMount = false;
     if (!terminal.element) {
-        terminal.open(parent);
-        didMount = true;
+        try {
+            terminal.open(parent);
+            didMount = true;
+            tbLog('TERM', 'open', { parent: parent.className, parentW: parent.clientWidth, parentH: parent.clientHeight });
+        } catch (e) {
+            tbLog('TERM_ERR', 'open failed', { error: String(e), parent: parent.className });
+            throw e;
+        }
     } else if (terminal.element.parentElement !== parent) {
         parent.innerHTML = '';
         parent.appendChild(terminal.element);
         didMount = true;
+        tbLog('TERM', 'move', { toParent: parent.className, parentW: parent.clientWidth });
     } else {
         // Already attached here; nothing to do.
         return;
@@ -475,29 +483,37 @@ function App() {
     // had its 90vw/85vh layout computed yet), giving us a tiny
     // initial size that WebGL then sticks to.
     const doFitAndWebGL = () => {
-        try { fitAddon.fit(); } catch {}
+        try {
+            fitAddon.fit();
+            tbLog('TERM', 'fit-pre', { cols: terminal.cols, rows: terminal.rows });
+        } catch (e) {
+            tbLog('TERM_ERR', 'fit-pre failed', { error: String(e) });
+        }
         if (!terminal._tb_webglLoaded) {
             try {
                 const webgl = new WebglAddon();
                 webgl.onContextLoss(() => {
-                    try { webgl.dispose(); } catch {}
+                    tbLog('WEBGL', 'context lost — disposing addon');
+                    try { webgl.dispose(); } catch (e) { tbLog('WEBGL_ERR', 'dispose on context loss failed', { error: String(e) }); }
                     terminal._tb_webglLoaded = false;
                 });
                 terminal.loadAddon(webgl);
                 terminal._tb_webglLoaded = true;
+                tbLog('WEBGL', 'loaded ok', { cols: terminal.cols, rows: terminal.rows });
                 // Refit AFTER WebGL takes over so the canvas matches the
                 // current cell grid. WebglAddon listens for terminal
                 // resize events and resizes its canvas accordingly, so
                 // any subsequent fit() propagates correctly.
-                try { fitAddon.fit(); } catch {}
+                try { fitAddon.fit(); } catch (e) { tbLog('TERM_ERR', 'fit-post-webgl failed', { error: String(e) }); }
             } catch (e) {
+                tbLog('WEBGL', 'unavailable, falling back to DOM', { error: String(e), msg: e?.message });
                 if (typeof console !== 'undefined') console.warn('[xterm] WebGL renderer unavailable, falling back to DOM:', e?.message || e);
             }
         } else if (didMount) {
             // Already-loaded WebGL: after re-attach to a new parent the
             // canvas needs a refresh + resize cycle.
-            try { fitAddon.fit(); } catch {}
-            try { terminal.refresh(0, terminal.rows - 1); } catch {}
+            try { fitAddon.fit(); } catch (e) { tbLog('TERM_ERR', 'fit-on-reattach failed', { error: String(e) }); }
+            try { terminal.refresh(0, terminal.rows - 1); } catch (e) { tbLog('TERM_ERR', 'refresh-on-reattach failed', { error: String(e) }); }
         }
     };
     if (typeof requestAnimationFrame === 'function') {
@@ -555,15 +571,19 @@ function App() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = window.location.host;
         ws = new WebSocket(`${protocol}//${host}/ws`);
-        
+
         ws.onopen = () => {
             console.log(`[WS] Connected to session ${sessionId}`);
+            tbLog('WS', 'open', { sessionId });
             setSessionSockets(prev => ({ ...prev, [sessionId]: ws }));
             const nc = scrollRef.current;
             const cellPxWidth = nc ? Math.max(400, nc.clientWidth - 96) : 1200;
             const cols = Math.max(40, Math.min(500, Math.floor(cellPxWidth / 8.5) - 4));
             ws.send(JSON.stringify({ type: 'join_session', sessionId, cols, rows: 24 }));
             retryCount = 0;
+        };
+        ws.onerror = (e) => {
+            tbLog('WS_ERR', 'socket error', { sessionId, msg: String(e) });
         };
 
         ws.onmessage = (event) => {
@@ -592,6 +612,7 @@ function App() {
                 setSessionSshHosts(prev => ({ ...prev, [sessionId]: msg.sshHost || null }));
             } else if (msg.type === 'new_cell') {
                 const newCellId = msg.cellId || `cell-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+                tbLog('CELL', 'new_cell', { cellId: newCellId, cmd: msg.command, remoteHost: msg.remoteHost });
                 setSessionCells(prev => {
                     const currentCells = prev[sessionId] || [];
                     if (currentCells.some(c => c.id === newCellId)) return prev;
@@ -601,21 +622,31 @@ function App() {
                 });
                 setSessionRunning(prev => ({ ...prev, [sessionId]: true }));
             } else if (msg.type === 'tui_enter') {
+                tbLog('TUI', 'enter', { cellId: msg.activeCellId ?? msg.cellId });
                 setSessionTuiStates(prev => ({ ...prev, [sessionId]: { cellId: msg.activeCellId ?? msg.cellId } }));
             } else if (msg.type === 'tui_exit') {
+                tbLog('TUI', 'exit', { cellId: msg.activeCellId ?? msg.cellId });
                 setSessionTuiStates(prev => { const n = {...prev}; delete n[sessionId]; return n; });
             } else if (msg.type === 'output') {
                 const cells = (sessionCellsRef.current[sessionId] || []);
                 const cell = cells.find(c => c.id === msg.cellId);
-                if (!cell || !cell.isRunning) return;
+                if (!cell || !cell.isRunning) {
+                    tbLog('OUTPUT_DROP', 'cell not running', { cellId: msg.cellId, dataLen: (msg.data||'').length });
+                    return;
+                }
                 const termData = getOrCreateTerminal(sessionId, msg.cellId);
-                termData.terminal.write(msg.data);
+                try {
+                    termData.terminal.write(msg.data);
+                } catch (e) {
+                    tbLog('OUTPUT_ERR', 'terminal.write threw', { cellId: msg.cellId, error: String(e) });
+                }
             } else if (msg.type === 'exit') {
                 const { cellId, pwd, snapshotAnsi, snapshotCols, snapshotRows, exitCode, usedTui, gitBranch, virtualEnv, condaEnv, remoteHost, usedSshSession } = msg;
                 const now = Date.now();
                 // Find startedAt to compute duration for notifications.
                 const cell = (sessionCellsRef.current[sessionId] || []).find(c => c.id === cellId);
                 const duration = cell && cell.startedAt ? now - cell.startedAt : null;
+                tbLog('CELL', 'exit', { cellId, exitCode, durationMs: duration, snapshotLen: (snapshotAnsi||'').length });
                 maybeNotifyCommandFinished(cell?.command || '', duration, exitCode);
                 setSessionCells(prev => ({ ...prev, [sessionId]: (prev[sessionId] || []).map(c => c.id === cellId ? { ...c, isRunning: false, snapshotAnsi, snapshotCols, snapshotRows, exitCode, finishedAt: now, usedTui, gitBranch, virtualEnv, condaEnv, remoteHost: remoteHost ?? c.remoteHost, usedSshSession } : c) }));
                 setSessionRunning(prev => ({ ...prev, [sessionId]: false }));
@@ -625,8 +656,9 @@ function App() {
             }
         };
 
-        ws.onclose = () => {
+        ws.onclose = (e) => {
             console.warn(`[WS] Connection closed for ${sessionId}. Retrying...`);
+            tbLog('WS', 'close', { sessionId, code: e.code, reason: e.reason, wasClean: e.wasClean, retryCount });
             setSessionSockets(prev => { const n = {...prev}; delete n[sessionId]; return n; });
             const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
             reconnectTimeout = setTimeout(() => {
@@ -871,7 +903,9 @@ function App() {
       setSessionRunning(prev => ({ ...prev, [activeSessionId]: true }));
 
       const ws = sessionSockets[activeSessionId];
+      tbLog('USER', 'submit', { cellId, cmd: cmd.slice(0, 80), wsState: ws?.readyState });
       if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'start', data: cmd, cellId }));
+      else tbLog('USER_ERR', 'submit dropped, ws not open', { cellId, wsState: ws?.readyState });
       setInputValue('');
 
       requestAnimationFrame(() => {

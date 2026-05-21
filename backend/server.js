@@ -741,7 +741,7 @@ function attachPtyHandlers(session) {
                     type: 'ssh_state', sshActive: true, sshHost: session.sshHost,
                 }));
             }
-            debugLog(`[CELL_CLOSE] session ${sessionId} cellId=${session.activeCellId} which=${finishMatch.which}`);
+            debugLog(`[CELL_CLOSE] session ${sessionId} cellId=${session.activeCellId} which=${finishMatch.which} bytesEmitted=${session._cellBytesEmitted || 0} durationMs=${Date.now() - (session._cellStartTime || Date.now())} clients=${session.clients.size}`);
             const toSend = session.tailBuf.substring(session.sentPos, finishMatch.firstIndex);
             if (toSend.length > 0) {
                 if (cell) cell.output = (cell.output || "") + toSend;
@@ -829,6 +829,7 @@ function attachPtyHandlers(session) {
             const toSend = session.tailBuf.substring(session.sentPos);
             if (toSend.length > 0) {
                 if (cell) cell.output = (cell.output || "") + toSend;
+                session._cellBytesEmitted = (session._cellBytesEmitted || 0) + toSend.length;
                 for (const ws of session.clients) ws.send(JSON.stringify({ type: 'output', data: toSend, cellId: session.activeCellId }));
                 session.sentPos = session.tailBuf.length;
             }
@@ -851,6 +852,11 @@ function attachPtyHandlers(session) {
 
 function startCommand(session, cellId, commandData) {
     debugLog(`[COMMAND_START] session ${session.id} cellId=${cellId} cmd=${commandData}`);
+    // Per-cell byte counter for diagnostics. Logged at CELL_CLOSE so we
+    // can tell whether "stuck cell" was due to no output reaching it,
+    // output reaching it but no finish marker, etc.
+    session._cellBytesEmitted = 0;
+    session._cellStartTime = Date.now();
 
     // ── SSH Path B detection ──
     // If we're starting a NEW top-level command (not already inside an
