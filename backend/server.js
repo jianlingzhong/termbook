@@ -105,14 +105,42 @@ process.on('SIGTERM', () => { cleanupZombies(); process.exit(); });
 process.on('exit', cleanupZombies);
 
 function calculateMinSize(session) {
+    // When a TUI app is active (modal open), the cell xterm is not
+    // visible — only the modal terminal matters. Use the MAX of any
+    // client requesting a "TUI" size (those that have flagged tuiCols
+    // / tuiRows on the WS connection) so the PTY matches what the
+    // modal actually shows. Otherwise, fall back to MIN across regular
+    // clients (so a small inline cell doesn't get cropped output).
+    //
+    // Without this distinction, a session with both a cell xterm
+    // (small, e.g. 145x24) and a modal xterm (big, e.g. 182x42) would
+    // have the PTY sized to min(145,182)x min(24,42) = 145x24 → nvim
+    // would draw at 24 rows even though the modal can show 42 → 18 rows
+    // of empty space below the status line (visible in the user's
+    // screenshot).
+    if (session.isTuiActive) {
+        let maxCols = 0, maxRows = 0;
+        for (const client of session.clients) {
+            if (client.tuiCols) maxCols = Math.max(maxCols, client.tuiCols);
+            if (client.tuiRows) maxRows = Math.max(maxRows, client.tuiRows);
+        }
+        if (maxCols > 0 && maxRows > 0) return { cols: maxCols, rows: maxRows };
+        // Fall through to the min logic if no tui size has been reported yet.
+    }
     let minCols = Infinity;
     let minRows = Infinity;
     for (const client of session.clients) {
         if (client.requestedCols) minCols = Math.min(minCols, client.requestedCols);
         if (client.requestedRows) minRows = Math.min(minRows, client.requestedRows);
     }
+    // Defaults when no client has reported a size yet (e.g. between
+    // PTY spawn and the first 'resize' from the frontend). Bumping rows
+    // from 24 → 40 covers most modal heights — important because a TUI
+    // app (nvim, less, htop) that starts at 24 rows and gets resized to
+    // 40+ during its initial draw can get into weird half-redrawn
+    // states on some hosts. Bigger initial size, fewer surprises.
     if (minCols === Infinity) minCols = 120;
-    if (minRows === Infinity) minRows = 24;
+    if (minRows === Infinity) minRows = 40;
     return { cols: minCols, rows: minRows };
 }
 
@@ -239,11 +267,28 @@ function spawnPtyForSession(session) {
   // / no-color "headless" mode. We ARE an interactive terminal, so these
   // shouldn't be inherited from however the backend was launched.
   //
-  // Strip: CI, GITHUB_ACTIONS, BUILDKITE, RUN_ID, CONTINUOUS_INTEGRATION,
-  // NO_COLOR. Also reset TERM to xterm-256color so anything that saw
-  // TERM=dumb on the parent gets a real terminal.
+  // Strip:
+  //   CI / GITHUB_ACTIONS / etc.: many CLIs (gemini-cli) go into headless
+  //   mode and break when they see CI=true.
+  //   TMUX / STY: if Termbook was launched from a tmux/screen session,
+  //   these leak into the child env. Apps that detect them (notably
+  //   neovim) assume they're INSIDE tmux and disable features like
+  //   alt-screen, mouse passthrough, true-color — because tmux is
+  //   supposed to handle those. The child shell+nvim should think
+  //   they're in a regular standalone terminal (Termbook), not inside
+  //   nested tmux.
+  //   NO_COLOR: parent may have it set for non-color output; we want
+  //   color in cells.
+  // Also reset TERM to xterm-256color so anything that saw TERM=dumb on
+  // the parent gets a real terminal.
   const childEnv = { ...process.env };
-  for (const k of ['CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'BUILDKITE', 'RUN_ID', 'GITLAB_CI', 'JENKINS_URL', 'NO_COLOR']) {
+  for (const k of [
+    'CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'BUILDKITE', 'RUN_ID',
+    'GITLAB_CI', 'JENKINS_URL', 'NO_COLOR',
+    'TMUX', 'TMUX_PANE', 'TMUX_PLUGIN_MANAGER_PATH',
+    'STY',                  // screen(1)
+    'ZELLIJ', 'ZELLIJ_PANE_ID', 'ZELLIJ_SESSION_NAME', // zellij
+  ]) {
     delete childEnv[k];
   }
   childEnv.TERM = 'xterm-256color';
@@ -255,7 +300,7 @@ function spawnPtyForSession(session) {
   const ptyProcess = pty.spawn(shell, ['--rcfile', rcPath, '-i'], {
     name: 'xterm-256color',
     cols: 120,
-    rows: 24,
+    rows: 40,
     cwd: startCwd,
     env: childEnv,
   });
@@ -558,11 +603,83 @@ function attachPtyHandlers(session) {
           maybeScheduleSshInjection(session);
       }
 
-      if (dataStr.includes('\x1b[?1049h')) {
-          session.isTuiActive = true;
-          const tuiCell = session.cells.find(c => c.id === session.activeCellId);
-          if (tuiCell) tuiCell.usedTui = true;
-          for (const ws of session.clients) ws.send(JSON.stringify({ type: 'tui_enter', cellId: session.activeCellId }));
+      // ── TUI detection: alt-screen + content-based fallback ──
+      //
+      // Standard signal: \x1b[?1049h (DECSET 1049 — enter alt-screen
+      // buffer). Classic vim, less, htop, etc. all emit this on startup
+      // and we open the modal immediately.
+      //
+      // Fallback for modern apps that DON'T use alt-screen (notably
+      // neovim ≥0.9 in many configs — it draws in-place using absolute
+      // cursor positioning instead of swapping buffers): we observe a
+      // combination of "I am taking over the screen" signals that no
+      // normal command (cat, echo, ls, grep, gemini-cli, etc.) ever
+      // emits in combination:
+      //   * bracketed paste enable (\x1b[?2004h) — interactive line
+      //     editor sentinel
+      //   * mouse mode enable (\x1b[?100x{h}|?1004h|?1006h) — only TUI
+      //     apps want raw mouse events
+      //   * cursor hide (\x1b[?25l) — TUIs typically hide cursor while
+      //     redrawing
+      //   * 5+ absolute cursor positions (\x1b[N;NH) — fullscreen
+      //     redraws use these heavily; line-streaming output doesn't
+      // We require AT LEAST TWO distinct strong signals before
+      // promoting, so a CLI that just hides the cursor briefly (e.g.
+      // a progress spinner) doesn't trigger promotion. The strong
+      // signals are: mouseMode, bracketedPaste-with-cursorHide, OR
+      // many absolute positions.
+      //
+      // This is a "real terminal" approach — we don't blacklist or
+      // whitelist app NAMES; we observe BEHAVIOR. If the user runs an
+      // unknown app that genuinely takes over the screen, it gets
+      // promoted. If they run `nvim --headless cat-mode-thing` (which
+      // wouldn't use these signals), it stays inline.
+      if (session.activeCellId && session._tuiSignals && !session._tuiSignals.promoted) {
+          const s = session._tuiSignals;
+          if (dataStr.includes('\x1b[?1049h')) s.altscreen = true;
+          if (/\x1b\[\?(1000|1002|1003|1004|1006|1015|1016)h/.test(dataStr)) s.mouseMode = true;
+          if (dataStr.includes('\x1b[?25l')) s.cursorHide = true;
+          if (dataStr.includes('\x1b[?2004h')) s.bracketedPaste = true;
+          const absMatches = dataStr.match(/\x1b\[\d+;\d+H/g);
+          if (absMatches) s.absolutePositions += absMatches.length;
+
+          // Promote when we have strong signals.
+          const strongCount =
+              (s.altscreen ? 1 : 0) +
+              (s.mouseMode ? 1 : 0) +
+              (s.absolutePositions >= 5 ? 1 : 0) +
+              (s.cursorHide && s.bracketedPaste ? 1 : 0);
+
+          if (strongCount >= 2 || s.altscreen) {
+              s.promoted = true;
+              session.isTuiActive = true;
+              const tuiCell = session.cells.find(c => c.id === session.activeCellId);
+              if (tuiCell) tuiCell.usedTui = true;
+              debugLog(`[TUI_PROMOTE] session ${sessionId} cellId=${session.activeCellId} signals=${JSON.stringify(s)}`);
+              for (const ws of session.clients) ws.send(JSON.stringify({ type: 'tui_enter', cellId: session.activeCellId }));
+              // After the modal opens, the frontend's modal window
+              // animates open over ~200ms (CSS transition on .tui-window),
+              // and the fitAddon may fit at intermediate sizes. The PTY
+              // gets resized multiple times as the modal grows, and TUI
+              // apps that started drawing before the resize can end up in
+              // half-redrawn states (e.g., nvim drew status line at row
+              // 22 of an old 24-row screen, but the modal is now 42 rows
+              // → 19 empty rows below the status line).
+              //
+              // We send two redraw kicks: one quick (200ms — covers most
+              // cases), and a follow-up (800ms — after the CSS transition
+              // and any subsequent fits have settled). Each kick writes
+              // \x0c (Ctrl+L) which most TUIs interpret as "clear &
+              // redraw". For nvim/vim specifically this triggers a full
+              // repaint at the current terminal size.
+              for (const delay of [200, 800]) {
+                  setTimeout(() => {
+                      if (session.isTuiActive && session.ptyProcess) {
+                          try { session.ptyProcess.write('\x0c'); } catch (e) {}
+                      }
+                  }, delay);
+              }
+          }
       }
       if (dataStr.includes('\x1b[?1049l')) {
           session.isTuiActive = false;
@@ -773,65 +890,7 @@ function startCommand(session, cellId, commandData) {
     }
 
     session.activeCellId = cellId; session.isTuiActive = false;
-
-    // ── TUI app pre-detection ──
-    // Some terminal apps (especially modern neovim) don't enter the
-    // standard alt-screen buffer (\x1b[?1049h) — they render in-place
-    // with cursor positioning. Without that signal we'd render them as
-    // a normal cell, which displays poorly (the app draws assuming a
-    // 24-row screen but the cell may show different rows, status lines
-    // appear orphaned, file content goes off-screen).
-    //
-    // For a curated list of KNOWN TUI apps (vim/nvim/emacs in TUI mode,
-    // pagers, monitors, file managers, etc.) we pre-promote the cell to
-    // the TUI modal at command-start time, BEFORE the app emits any
-    // bytes. The modal's xterm gets sized correctly, the app renders
-    // into it from the first frame.
-    //
-    // Matching is on the first non-option token of the command line. We
-    // also detect `ssh -t host vim ...` (the trailing remote command is
-    // a TUI). Aggressive false positives (treating gemini-cli as TUI)
-    // were the reason this auto-promotion was removed historically —
-    // the LIST is what keeps it safe now.
-    const KNOWN_TUI_COMMANDS = new Set([
-        'vim', 'vi', 'nvim', 'nano', 'emacs', 'micro', 'helix', 'hx',
-        'less', 'more', 'most', 'pg', 'man', 'info',
-        'top', 'htop', 'btop', 'btm', 'glances', 'iotop', 'iftop',
-        'tig', 'lazygit', 'gitui', 'lazydocker', 'k9s',
-        'ranger', 'mc', 'nnn', 'lf', 'yazi', 'broot',
-        'tmux', 'screen',
-        'mutt', 'neomutt', 'aerc', 'newsboat', 'tin', 'slrn',
-        'ncmpcpp', 'cmus', 'mocp',
-        'crawl', 'cataclysm', 'nethack',
-    ]);
-    function firstCommandToken(cmd) {
-        const tokens = String(cmd || '').trim().split(/\s+/);
-        if (tokens.length === 0) return null;
-        if (tokens[0] === 'ssh') {
-            // Skip ssh options + host, return next token if any.
-            let i = 1;
-            const flagsWithArg = new Set(['-p','-l','-i','-o','-J','-F','-L','-R','-D','-W','-w','-Q','-S','-c','-m','-e','-b','-B','-E','-I','-O']);
-            let sawHost = false;
-            while (i < tokens.length) {
-                const t = tokens[i];
-                if (t === '--') { i++; continue; }
-                if (t.startsWith('-')) {
-                    if (flagsWithArg.has(t) && i + 1 < tokens.length) i += 2;
-                    else i++;
-                    continue;
-                }
-                if (!sawHost) { sawHost = true; i++; continue; }
-                return t; // first token after host = remote command
-            }
-            return null;
-        }
-        // Strip leading env-var assignments like `FOO=bar nvim x`
-        let i = 0;
-        while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
-        return tokens[i] || null;
-    }
-    const tuiToken = firstCommandToken(commandData);
-    const isKnownTui = !!(tuiToken && KNOWN_TUI_COMMANDS.has(tuiToken.replace(/^.*\//, '')));
+    session._tuiSignals = { altscreen: false, mouseMode: false, cursorHide: false, absolutePositions: 0, promoted: false };
 
     const newCell = {
         id: cellId,
@@ -845,14 +904,7 @@ function startCommand(session, cellId, commandData) {
         // session — the outer `ssh ...` cell itself is NOT tagged this
         // way (it's tagged later with usedSshSession instead).
         remoteHost: inSshContext ? session.sshHost : null,
-        // Pre-mark known TUI apps so the frontend opens the modal
-        // immediately, even if the app never emits \x1b[?1049h.
-        usedTui: isKnownTui || false,
     };
-    if (isKnownTui) {
-        session.isTuiActive = true;
-        debugLog(`[TUI_PROMOTE] session ${session.id} cellId=${cellId} command=${tuiToken} (pre-promoted, no altscreen needed)`);
-    }
     session.cells.push(newCell);
     persistCell(session, newCell);
 
@@ -876,17 +928,8 @@ function startCommand(session, cellId, commandData) {
         cellId,
         command: commandData,
         remoteHost: newCell.remoteHost,
-        // Pre-promoted TUI: frontend opens the modal immediately so the
-        // modal's xterm is sized correctly BEFORE the TUI app starts
-        // drawing. Critical for modern nvim which doesn't enter
-        // alt-screen but still expects a known terminal size.
-        preTui: !!newCell.usedTui,
     });
     for (const ws of session.clients) if (ws.readyState === 1) ws.send(newCellMsg);
-    if (newCell.usedTui) {
-        const tuiMsg = JSON.stringify({ type: 'tui_enter', cellId });
-        for (const ws of session.clients) if (ws.readyState === 1) ws.send(tuiMsg);
-    }
     if (session.tailBuf.length > 0 && !session.tailBuf.includes('\x1b[2J')) {
         // In an the active SSH integration SSH cell, tailBuf at this point contains the
         // remote shell's next-prompt redraw (drawn between cells). It's
@@ -945,20 +988,17 @@ wss.on('connection', (ws, req) => {
         }
       } else if (msg.type === 'input') {
         const s = sessions.get(activeId);
-        if (s) {
-            const preview = (msg.data || '').slice(0, 40).replace(/[^\x20-\x7e]/g, c => '\\x' + c.charCodeAt(0).toString(16).padStart(2,'0'));
-            debugLog(`[INPUT] session ${activeId} (${(msg.data||'').length} char): ${preview} | sshState=${s.sshState} ptyAlive=${!!s.ptyProcess}`);
-            try {
-                s.ptyProcess.write(msg.data);
-                debugLog(`[INPUT_WRITTEN] OK`);
-            } catch (e) {
-                debugLog(`[INPUT_WRITE_ERR] ${e.message}`);
-            }
-        } else {
-            debugLog(`[INPUT_NO_SESSION] activeId=${activeId}`);
-        }
+        if (s) s.ptyProcess.write(msg.data);
       } else if (msg.type === 'resize') {
-        ws.requestedCols = msg.cols; ws.requestedRows = msg.rows;
+        // Frontend can flag a resize as coming from the TUI modal (vs the
+        // inline cell xterm). When a TUI app is active, calculateMinSize
+        // uses the MAX of tuiCols/tuiRows (so the modal's real size wins
+        // over any small inline-cell size still being reported).
+        if (msg.isTui) {
+            ws.tuiCols = msg.cols; ws.tuiRows = msg.rows;
+        } else {
+            ws.requestedCols = msg.cols; ws.requestedRows = msg.rows;
+        }
         const s = sessions.get(activeId);
         if (s) handleResize(s);
       }

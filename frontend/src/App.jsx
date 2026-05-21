@@ -421,13 +421,17 @@ function App() {
         .finally(() => removeSessionLocally(sessionId));
   };
 
-  const requestResizeFor = (sessionId) => (cols, rows) => {
+  const requestResizeFor = (sessionId, isTui = false) => (cols, rows) => {
     const ws = sessionSockets[sessionId];
     if (!ws || ws.readyState !== 1) return;
-    const last = lastResizePerSession.current[sessionId];
-    if (last && last.cols === cols && last.rows === rows) return;
-    lastResizePerSession.current[sessionId] = { cols, rows };
-    ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+    // Track TUI sizes separately from cell sizes so the backend can pick
+    // the right one when a TUI app is active.
+    const key = isTui ? 'tui' : 'cell';
+    const lastBy = lastResizePerSession.current[sessionId] || {};
+    if (lastBy[key] && lastBy[key].cols === cols && lastBy[key].rows === rows) return;
+    lastBy[key] = { cols, rows };
+    lastResizePerSession.current[sessionId] = lastBy;
+    ws.send(JSON.stringify({ type: 'resize', cols, rows, isTui }));
   };
 
   const getOrCreateTerminal = (sessionId, cellId = null) => {
@@ -1102,7 +1106,7 @@ function App() {
           <Minimize2 size={14} />
         </button>
       )}
-      {activeTuiState && <TuiModal activeTerminal={getOrCreateTerminal(activeSessionId, activeTuiState.cellId)} requestResize={requestResizeFor(activeSessionId)} />}
+      {activeTuiState && <TuiModal activeTerminal={getOrCreateTerminal(activeSessionId, activeTuiState.cellId)} requestResize={requestResizeFor(activeSessionId, true)} />}
       {historySearch && (
         <div className="history-search-overlay" onClick={() => setHistorySearch(null)}>
           <div className="history-search-modal" onClick={(e) => e.stopPropagation()}>
