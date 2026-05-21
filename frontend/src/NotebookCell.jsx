@@ -33,25 +33,87 @@ function ansiToPlainHtml(ansi) {
     return `<pre style="margin:0;font-family:monospace;color:#e0e5ff;white-space:pre-wrap;line-height:1.6;font-size:13px">${escapeHtml(stripped)}</pre>`;
 }
 
-function trimSnapshotRows(html) {
-    const rowRegex = /<div><span([^>]*)>([\s\S]*?)<\/span><\/div>/g;
+// Trim empty rows + (optionally) trailing remote-shell prompt-redraw rows.
+//
+// Background: every cell's snapshot is captured ~300ms after the OSC 133;D
+// finish marker, so the remote shell has had time to print the NEXT prompt
+// (p10k's two-line `~/path  branch \n❯` etc.) into the headless terminal.
+// Stripping it on the backend would mean introducing complex timing
+// guarantees around xterm.js's async write queue (we tried; broke other
+// tests). Stripping on the frontend after rendering is cheap and safe.
+//
+// When `remoteHost` is set, we additionally chop trailing rows that look
+// like the remote shell's prompt (contain `❯`/`$`/`#`/`%` followed by only
+// whitespace, OR contain `@hostname` patterns followed by little content).
+function trimSnapshotRows(html, { stripTrailingPrompt = false } = {}) {
+    // Each row is a <div>...</div> that contains ONE OR MORE <span>...</span>
+    // children. The old regex `<div><span...>(.*?)</span></div>` only captured
+    // single-span rows correctly; multi-span rows (which p10k generates with
+    // separate spans for different prompt segments) were truncated, breaking
+    // the trim heuristics. We now match the entire <div>...</div> non-greedily.
+    const rowRegex = /<div>([\s\S]*?)<\/div>/g;
     const rows = [];
     let match;
     while ((match = rowRegex.exec(html)) !== null) {
-        const content = match[2];
+        const content = match[1];
         const stripped = content.replace(/<[^>]+>/g, '');
         const trimmed = stripped.replace(/[\s\u00a0]/g, '');
+        // A "prompt-like" row matches when stripTrailingPrompt is on AND
+        // the row's content contains ONLY recognizable prompt fragments:
+        // whitespace, prompt chars (❯ $ # % >), path tokens (~, /...),
+        // user@host indicators, and Powerline/Nerd-font glyph icons in
+        // the Unicode private-use areas (U+E000..U+F8FF, U+F0000..,
+        // U+100000..) that p10k and friends emit for segment separators
+        // and folder/branch icons.
+        //
+        // Specifically: after removing all known prompt fragments, what's
+        // left is empty or just whitespace. This avoids false positives
+        // on actual data rows (filenames, command output, etc.).
+        //
+        // Note: serializeAsHTML emits U+00A0 (NBSP) for column-alignment
+        // spaces, which `String.trim()` does NOT strip. We normalize NBSP
+        // alongside regular whitespace.
+        const condensed = stripped.replace(/[\s\u00a0]+/g, ' ').replace(/^ +| +$/g, '');
+        // A row is "prompt-like" ONLY when it contains a STRONG prompt
+        // signal (user@host pattern OR Powerline/Nerd-font glyph icon)
+        // AND every remaining character belongs to a recognized prompt
+        // fragment (whitespace, prompt char, the literal `~` home token).
+        //
+        // Critical: don't strip `/<path>` tokens — they're often legit
+        // output (e.g. `pwd` printing `/tmp`). The `~` home symbol is
+        // safe because no normal command prints a lone `~` line.
+        const hasGlyphIcon = /[\uE000-\uF8FF]/.test(condensed) || /[\u{F0000}-\u{10FFFD}]/u.test(condensed);
+        const hasUserHost = /[A-Za-z0-9._-]+@[A-Za-z0-9._-]+/.test(condensed);
+        const hasPromptChar = /[❯$#%]/.test(condensed);
+        const residue = condensed
+            .replace(/[A-Za-z0-9._-]+@[A-Za-z0-9._-]+/g, '')   // user@host
+            .replace(/[❯$#%>]/g, '')                            // prompt char
+            .replace(/[\uE000-\uF8FF]/g, '')                    // BMP private-use icons
+            .replace(/[\u{F0000}-\u{10FFFD}]/gu, '')            // supplementary private-use planes
+            .replace(/~/g, '')                                  // lone ~ (home)
+            .replace(/[ ]+/g, '')
+            .trim();
+        // Strong signal: at least one of (glyph icon, user@host, prompt
+        // char like ❯/$/#/%) is present — without one of these, treating
+        // a row as "prompt-only" is too risky (would chop short data rows
+        // like `/tmp`, `~`, single-char output).
+        const promptLike = stripTrailingPrompt
+            && (hasGlyphIcon || hasUserHost || hasPromptChar)
+            && condensed.length > 0
+            && residue.length === 0
+            && condensed.length < 200;
         rows.push({
             start: match.index,
             end: match.index + match[0].length,
             empty: trimmed.length === 0,
+            promptLike,
         });
     }
     if (rows.length === 0) return html;
     let first = 0;
     while (first < rows.length && rows[first].empty) first++;
     let last = rows.length - 1;
-    while (last >= 0 && rows[last].empty) last--;
+    while (last >= 0 && (rows[last].empty || rows[last].promptLike)) last--;
     if (first > last) return '';
     const prefix = html.substring(0, rows[first].start);
     const middle = html.substring(rows[first].start, rows[last].end);
@@ -68,6 +130,19 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
   const [liveContentRows, setLiveContentRows] = useState(0);
   const plainPlaceholder = useMemo(() => snapshotAnsi ? ansiToPlainHtml(snapshotAnsi) : null, [snapshotAnsi]);
   const displaySnapshot = renderedSnapshot || plainPlaceholder;
+
+  // If remoteHost changes after the snapshot was already rendered (race
+  // between exit-msg arrival and the props propagating to this child),
+  // force a re-render with the now-correct stripTrailingPrompt setting.
+  const lastRemoteHostRef = useRef(remoteHost);
+  useEffect(() => {
+    if (lastRemoteHostRef.current !== remoteHost && renderedSnapshot) {
+      lastRemoteHostRef.current = remoteHost;
+      setRenderedSnapshot(null);
+    } else {
+      lastRemoteHostRef.current = remoteHost;
+    }
+  }, [remoteHost, renderedSnapshot]);
 
   const terminalRefCallback = useCallback(node => {
     if (node !== null) {
@@ -102,12 +177,15 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
                        // JetBrains Mono at 13px.
                        .replace(/font-family:\s*[^;"']+;?/gi, '')
                        .replace(/font-size:\s*[^;"']+;?/gi, '');
-            cleaned = trimSnapshotRows(cleaned);
+            cleaned = trimSnapshotRows(cleaned, { stripTrailingPrompt: !!remoteHost });
             setRenderedSnapshot(cleaned);
             tempTerm.dispose();
         });
     }
-  }, [id, snapshotAnsi, renderedSnapshot]);
+    // remoteHost is read inside the effect to decide on prompt-residue
+    // trimming; must be in deps so a cell whose remoteHost arrives after
+    // snapshotAnsi re-trims correctly.
+  }, [id, snapshotAnsi, renderedSnapshot, remoteHost]);
 
   useEffect(() => {
     const isLive = !renderedSnapshot && !isTuiActive;
