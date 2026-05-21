@@ -383,6 +383,10 @@ function requestRemoteCompletion(session, input, timeoutMs = REMOTE_COMPLETION_T
         // "ls " + Tab to list cwd).
         const lastSpace = input.lastIndexOf(' ');
         const currentToken = lastSpace >= 0 ? input.slice(lastSpace + 1) : input;
+        // First-token detection: no spaces means user is typing the COMMAND
+        // name → ask remote for executables on PATH + builtins/aliases.
+        // Otherwise it's a path/argument → glob in the remote cwd.
+        const kind = (lastSpace < 0) ? 'cmd' : 'path';
         if (!session.pendingCompletions) session.pendingCompletions = [];
         session.sshCompletionReqCounter = (session.sshCompletionReqCounter || 0) + 1;
         const reqId = `rc${session.sshCompletionReqCounter}`;
@@ -390,15 +394,15 @@ function requestRemoteCompletion(session, input, timeoutMs = REMOTE_COMPLETION_T
         const settle = (result) => { if (!settled) { settled = true; resolve(result); } };
         const pc = {
             reqId,
-            resolve: (r) => settle({ candidates: r.candidates, currentToken }),
-            reject: () => settle({ candidates: [], currentToken }),
+            resolve: (r) => settle({ candidates: r.candidates, currentToken, kind }),
+            reject: () => settle({ candidates: [], currentToken, kind }),
         };
         session.pendingCompletions.push(pc);
         try {
-            session.ptyProcess.write(sshMod.buildRemoteCompletionRequest(reqId, currentToken));
+            session.ptyProcess.write(sshMod.buildRemoteCompletionRequest(reqId, currentToken, kind));
         } catch (e) {
             session.pendingCompletions = session.pendingCompletions.filter(p => p !== pc);
-            settle({ candidates: [], currentToken });
+            settle({ candidates: [], currentToken, kind });
             return;
         }
         setTimeout(() => {
@@ -930,13 +934,15 @@ app.get('/api/complete', async (req, res) => {
         if (s && s.sshActive && s.sshState === 'active') {
             const remote = await requestRemoteCompletion(s, input);
             // Map remote candidate strings to the {value, isDir, type} shape
-            // local completion uses, so frontend doesn't need a special path.
+            // local completion uses, so frontend doesn't need a special
+            // code path. For 'cmd' kind, treat candidates as executables
+            // (no trailing slash, never directories).
             const candidates = remote.candidates.map(raw => {
                 const isDir = raw.endsWith('/');
                 const value = isDir ? raw.slice(0, -1) : raw;
-                return { value, isDir, type: 'file' };
+                return { value, isDir, type: remote.kind === 'cmd' ? 'exec' : 'file' };
             });
-            return res.json({ input, cwd, currentToken: remote.currentToken, candidates, source: 'remote' });
+            return res.json({ input, cwd, currentToken: remote.currentToken, candidates, source: 'remote', kind: remote.kind });
         }
         const result = completion.complete(input, cwd, USER_ALIASES);
         res.json({
