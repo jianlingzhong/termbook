@@ -654,7 +654,20 @@ function attachPtyHandlers(session) {
               s.promoted = true;
               session.isTuiActive = true;
               const tuiCell = session.cells.find(c => c.id === session.activeCellId);
-              if (tuiCell) tuiCell.usedTui = true;
+              // Mark the cell as "currently in TUI mode" so the frontend
+              // opens the modal. We do NOT set usedTui yet — usedTui is
+              // about whether the FINAL snapshot is throwaway TUI screen
+              // content, and we only know that at cell-close time. A
+              // command like `brew install` enters alt-screen briefly
+              // for a progress display, then exits alt-screen and writes
+              // SUMMARY output to the main screen — that summary IS the
+              // snapshot the user wants to see, not hidden behind an
+              // "Interactive session ended" placeholder.
+              //
+              // The close-handler (see ~30 lines below) sets usedTui only
+              // if session.isTuiActive is still true at close time (i.e.
+              // the cell ended WHILE in alt-screen, like vim/nvim).
+              if (tuiCell) tuiCell._promotedTui = true;
               debugLog(`[TUI_PROMOTE] session ${sessionId} cellId=${session.activeCellId} signals=${JSON.stringify(s)}`);
               for (const ws of session.clients) ws.send(JSON.stringify({ type: 'tui_enter', cellId: session.activeCellId }));
               // Note: we previously sent `\x1b[18t` (CSI window-size
@@ -775,7 +788,37 @@ function attachPtyHandlers(session) {
                     snapshotRows = session.headlessTerminal.rows;
                 }
                 const closedCell = session.cells.find(c => c.id === currentCellId);
-                const wasTui = !!(closedCell && (closedCell.usedTui || closedCell.inlineTuiLike));
+                // Determine whether the snapshot is meaningful or just a
+                // throwaway TUI screen.
+                //
+                // Rule: the cell was a "real TUI" (snapshot hidden, show
+                // "Interactive session ended" placeholder) IF:
+                //   1. It was promoted to TUI mode at some point
+                //      (_promotedTui=true), AND
+                //   2. Its main-screen snapshot at close is essentially
+                //      empty — just whitespace + a prompt char or two.
+                //
+                // vim/nvim/less/htop: enter alt-screen, stay there, exit
+                // at close → main screen has only the bash prompt that
+                // was there before → snapshot is empty → wasTui=true.
+                //
+                // brew install / npm install: stream output, enter
+                // alt-screen briefly, exit, write SUMMARY → snapshot has
+                // real content → wasTui=false, show it.
+                //
+                // gemini-cli (inlineTuiLike, high ANSI score, no
+                // alt-screen): never promoted, snapshot always shown.
+                let wasTui = false;
+                if (closedCell && closedCell._promotedTui) {
+                    // Strip ANSI escapes and whitespace; what remains?
+                    const visibleContent = (snapshotAnsi || '')
+                        .replace(/\x1b\][^\x07]*\x07/g, '')   // OSC seqs
+                        .replace(/\x1b\[[0-9;:?]*[a-zA-Z]/g, '') // CSI seqs
+                        .replace(/\x1b[()*+][\x20-\x7e]/g, '') // charset seqs
+                        .replace(/[\s\u00a0❯$#%>]/g, '')      // whitespace + prompt chars
+                        .length;
+                    wasTui = visibleContent < 10;
+                }
                 if (closedCell) {
                     closedCell.snapshotAnsi = wasTui ? "" : snapshotAnsi;
                     closedCell.snapshotCols = snapshotCols;
