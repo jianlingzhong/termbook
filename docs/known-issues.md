@@ -291,13 +291,17 @@ prompt fragment). NBSP padding is normalized before the heuristics run.
 Used to be: the only indicator that the top-of-screen pwd was REMOTE
 was the per-cell SSH chip on the right edge of each cell. With multiple
 sessions in the sidebar you couldn't tell which were remote without
-clicking through.
+clicking through. And while typing in the chat input, your eyes were on
+the input box but the only signal was up in the header — easy to type
+a command thinking you were local.
 
-Resolved by adding (a) an always-visible orange `🖥 host` chip next to
-the top-header pwd breadcrumb, and (b) a small orange Server icon +
-left border on sidebar session entries that are inside an active SSH
-session. Both driven by per-session `sessionSshActive` / `sessionSshHosts`
-state populated from `ssh_state` WS broadcasts.
+Resolved by adding the host badge in THREE places (all orange):
+(a) top-header chip next to the pwd breadcrumb,
+(b) sidebar Server-icon + left border on sessions inside SSH,
+(c) **input prompt prefix** — the generic cyan `termbook ❯` is replaced
+    with orange `🖥 host ❯` directly to the left of the typed text, with
+    the input wrapper border tinted orange too. This last one is the
+    safety net — it sits exactly where the user's eyes are when typing.
 
 ### ✅ First-token Tab completion didn't work for remote commands
 
