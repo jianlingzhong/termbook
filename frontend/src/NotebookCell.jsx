@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Folder, Copy, RotateCcw, Check, AlertTriangle, GitBranch, Package, Server } from 'lucide-react';
-import { Terminal } from 'xterm';
+import { Terminal } from '@xterm/xterm';
 import { SerializeAddon } from '@xterm/addon-serialize';
 
 function formatDuration(ms) {
