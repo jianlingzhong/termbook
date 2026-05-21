@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import NotebookCell from './NotebookCell';
 import TuiModal from './TuiModal';
-import { Terminal } from 'xterm';
+import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
-import 'xterm/css/xterm.css';
+import '@xterm/xterm/css/xterm.css';
 import { TerminalSquare, Plus, Folder, Hash, X, ChevronDown, Maximize2, Minimize2, Server } from 'lucide-react';
 import './index.css';
 
@@ -450,7 +450,17 @@ function App() {
       // tofu blocks appear (better than overlapping or wrong glyphs).
       fontFamily: '"JetBrains Mono", "JetBrainsMono Nerd Font", "MesloLGS NF", "Hack Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font", "Apple Color Emoji", monospace',
       fontSize: 13, allowProposedApi: true,
-      rows: 24, cols: 120, rendererType: 'dom'
+      rows: 24, cols: 120,
+      // Known issue: JetBrains Mono at 13px → cellWidth=~7.81 (fractional).
+      // xterm's DOM renderer positions the cursor overlay at
+      // `left = col * cellWidth` and after many cursor moves the
+      // accumulated rounding error causes the cursor block to straddle
+      // two characters instead of sitting on one. We tried letterSpacing
+      // to pad cells to an integer width, but xterm's step quantization
+      // skips 8px (7.8 → 8.8) so we couldn't snap cleanly without
+      // losing 17 cols of width. Documented in docs/known-issues.md;
+      // proper fix requires switching to @xterm/addon-webgl which has
+      // open compat issues with our xterm pin.
     });
     if (typeof document !== 'undefined') {
         const div = document.createElement('div');
