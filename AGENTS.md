@@ -277,6 +277,27 @@ regenerated PNG before committing.
 session activity. Truncate it before reproducing a bug:
 `: > ssr_debug.log` then trigger the bug, then `tail -50 ssr_debug.log`.
 
+For **frontend** bugs ("cell stuck spinning", "modal doesn't open", "input
+disabled"), the frontend has an always-on ring-buffer logger (last 500
+events) in `frontend/src/debug.js`. Tell the user to:
+
+1. Reproduce the bug in their browser
+2. Open DevTools console
+3. Run `__tbDebug()` — prints the buffer + copies it to their clipboard
+4. Paste the output into the bug report
+
+This captures terminal lifecycle (open / move / fit / WebGL load),
+WebSocket open/close/errors, every `new_cell`/`output`/`exit` WS message
+the frontend received, command submissions, dropped messages, AND
+uncaught errors with stack traces. Combined with `tail ssr_debug.log`
+this gives full bidirectional observability without needing the user's
+exact environment.
+
+Add new `tbLog('CATEGORY', message, optionalDetails)` calls anywhere in
+frontend code that does something non-trivial. Don't be stingy — the
+ring buffer is 500 events deep; over-logging is harmless, under-logging
+makes "I can't reproduce" bugs unfixable.
+
 ## Conventions
 
 - **Code style**: Match what's already there. No prettier/eslint config is
