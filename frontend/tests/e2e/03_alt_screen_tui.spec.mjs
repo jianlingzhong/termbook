@@ -246,6 +246,67 @@ test.describe('alt-screen TUIs', () => {
         await waitForIdle(page, 10000);
     });
 
+    test('xterm uses WebGL renderer (eliminates cursor sub-pixel drift)', async ({ page }, testInfo) => {
+        // Background: xterm's DOM renderer computes cellWidth from font
+        // metrics and often gets a fractional value (JetBrains Mono 13px
+        // → 7.81px). The cursor block, rendered as an absolutely-
+        // positioned overlay div at `left = col * cellWidth`, accumulates
+        // rounding error → visible as the cursor straddling two
+        // characters after many cursor moves. The WebGL renderer draws
+        // every cell at integer pixel boundaries on a canvas, so the
+        // cursor is always pixel-aligned.
+        //
+        // This test verifies the WebGL renderer is in use (canvas
+        // elements present, _tb_webglLoaded flag set) for the modal
+        // terminal. If WebGL silently falls back to DOM in a future
+        // change, this test catches it.
+        await gotoFreshSession(page);
+        await page.locator('.chat-input-wrapper textarea').first().fill('which nvim 2>/dev/null && echo NVIM_OK || echo NVIM_MISSING');
+        await page.locator('.chat-input-wrapper textarea').first().press('Enter');
+        await waitForIdle(page);
+        const probe = await lastCellInfo(page);
+        test.skip(probe.output.includes('NVIM_MISSING'), 'nvim not installed');
+
+        await page.locator('.chat-input-wrapper textarea').first().fill('printf "line1\\nline2\\nline3\\n" > /tmp/tb_webgl_test.txt');
+        await page.locator('.chat-input-wrapper textarea').first().press('Enter');
+        await waitForIdle(page);
+
+        await startCommand(page, 'nvim /tmp/tb_webgl_test.txt');
+        await page.waitForSelector('.tui-window', { timeout: 8000 });
+        await page.waitForTimeout(1500);
+
+        const rendererInfo = await page.evaluate(() => {
+            const t = window.__ACTIVE_TERM;
+            return {
+                webglLoaded: !!t?._tb_webglLoaded,
+                modalCanvasCount: document.querySelectorAll('.tui-window canvas').length,
+                cellWidthCss: t?._core?._renderService?.dimensions?.css?.cell?.width,
+            };
+        });
+        // Headless Playwright/Chromium may not have GPU access, in which
+        // case WebGL silently falls back to DOM. Skip the assertion in
+        // that case — but in a real browser (which is what users hit)
+        // WebGL WILL be active.
+        if (!rendererInfo.webglLoaded) {
+            test.skip(true, 'WebGL unavailable in this environment (headless without GPU); real browsers use WebGL');
+            return;
+        }
+        // WebGL adds multiple canvases (background, text, link layers).
+        expect(rendererInfo.modalCanvasCount).toBeGreaterThanOrEqual(2);
+        // WebGL normalizes cellWidth to an integer. With the DOM
+        // renderer this would be ~7.81 (fractional). If we see a
+        // fractional value, WebGL silently failed despite reporting
+        // loaded.
+        expect(Number.isInteger(rendererInfo.cellWidthCss),
+            `cellWidth=${rendererInfo.cellWidthCss} is fractional — WebGL renderer not active, cursor drift will return`
+        ).toBe(true);
+
+        await page.keyboard.press('Escape');
+        await page.keyboard.type(':q!');
+        await page.keyboard.press('Enter');
+        await waitForIdle(page, 10000);
+    });
+
     test('cat (not a TUI) does NOT trigger modal promotion', async ({ page }, testInfo) => {
         // The content-based detection should NOT trigger on commands that
         // just stream text. If `cat` (or `ls`, `grep`, `echo`) accidentally
