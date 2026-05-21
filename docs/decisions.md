@@ -1332,3 +1332,62 @@ similar hosts.
 
 See `backend/server.js:/api/config` and `frontend/src/App.jsx`
 prefix render in `chat-input-wrapper`.
+
+---
+
+### xterm.js WebGL renderer (cursor pixel-alignment) {#xterm-webgl}
+
+**Decision**: load `@xterm/addon-webgl` for both live cell terminals
+and TUI modal terminals. The addon renders the entire xterm into a
+single canvas at integer pixel boundaries, replacing the default DOM
+renderer which positions individual cell elements with fractional
+pixel coordinates.
+
+**Why**: the DOM renderer computes `cellWidth` from font metrics. With
+JetBrains Mono at fontSize=13 this evaluates to ~7.81px (fractional).
+The cursor block is an absolutely-positioned overlay div at
+`left = col * cellWidth`. After many cursor moves the accumulated
+rounding error drifts the cursor across pixel grid boundaries — visible
+in nvim as the cursor block straddling two characters instead of
+sitting on one. Three things were tried before WebGL won:
+
+1. `letterSpacing` to pad cellWidth to an integer. xterm quantizes
+   letterSpacing in steps that skip 8px (goes 7.8 → 8.8 with no value
+   in between), so we couldn't snap to 8 without losing ~17 columns of
+   width — a regression caught by the `PTY uses available horizontal
+   space` visual test.
+2. Various font-size tweaks. No fontSize value produced an integer
+   cellWidth for JetBrains Mono.
+3. CSS hacks (`image-rendering`, `transform: translateZ(0)`). Don't
+   affect xterm's coordinate math.
+
+WebGL fixed it cleanly.
+
+**Lifecycle** (`frontend/src/App.jsx attachTerminal`):
+- Terminals are NOT opened until they're attached to a real, visible
+  parent (live cell container OR TUI modal container). Previously we
+  opened them in an off-screen div first; the WebGL canvas was created
+  at the off-screen dimensions and never resized to fit the real
+  parent when later moved.
+- On attach: `terminal.open(parent)` → wait one `requestAnimationFrame`
+  (so parent layout is settled) → `fitAddon.fit()` → `WebglAddon` load
+  → `fitAddon.fit()` again (so canvas matches the post-fit cell grid).
+- WebglAddon load is wrapped in try/catch with silent DOM fallback for
+  environments without GPU access.
+
+**Trade-offs / known limits**:
+- Headless Chromium without GPU silently falls back to DOM. The cursor
+  drift returns there. The dedicated test (`xterm uses WebGL renderer`
+  in 03_alt_screen_tui.spec.mjs) skips with a clear message in that
+  environment. Real users always have WebGL.
+- One xterm version migration tagged along: `xterm` 5.3 → `@xterm/xterm`
+  5.5 to match the addon ecosystem. Pure import path change, no API
+  break.
+
+**Don't**:
+- Re-add the off-screen `terminal.open()` in `getOrCreateTerminal`. It
+  causes the WebGL canvas to lock to the off-screen dimensions.
+- Send `\x0c` (Ctrl+L) or `\x1b[18t` to TUI apps as a "force redraw"
+  nudge. NvChad remaps `^L`; vim treats `\x1b[18t` as literal `8t`
+  input. The PTY's SIGWINCH on resize is the only signal that's
+  guaranteed-safe across apps.
