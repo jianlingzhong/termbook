@@ -18,13 +18,21 @@ Self-hosted, localhost-only. Open-source.
   salted shell-integration into the remote shell. From that point each
   REMOTE command becomes its own Termbook cell with the real remote pwd,
   git branch, and exit code. Tab in the chat input completes against the
-  REMOTE filesystem (paths AND command names on PATH); Ctrl+D ends the
-  SSH session. While in SSH the host is shown in three deliberate places
-  — the input prompt prefix becomes an orange `🖥 host ❯` badge right
-  where you type (so you never accidentally type thinking you're local),
-  the sidebar marks the session with a Server icon, and each remote
-  cell carries an orange host chip in its header. Append `--no-termbook`
-  to opt out per-command and get a plain passthrough terminal.
+  REMOTE filesystem (paths AND command names on PATH); Ctrl+D cleanly
+  ends the SSH session (synthesizes a visible `exit` cell, works on any
+  remote shell regardless of `^D` binding). While in SSH the host is
+  shown in three deliberate places — the input prompt prefix becomes
+  an orange `🖥 host ❯` badge right where you type (so you never
+  accidentally type thinking you're local), the sidebar marks the
+  session with a Server icon, and each remote cell carries an orange
+  host chip in its header. The local prompt prefix shows your actual
+  hostname (e.g. `your-mac.local ❯`) when not in SSH. Append
+  `--no-termbook` to opt out per-command and get a plain passthrough
+  terminal.
+- **TUI apps work out of the box:** vim, nvim, emacs, htop, less, tig,
+  lazygit, ranger, etc. open in a full-screen modal automatically, even
+  if they don't emit the standard alt-screen escape (modern neovim
+  often doesn't). Curated list in `backend/server.js KNOWN_TUI_COMMANDS`.
 - TUIs (vim, top, htop) — anything that uses the alt-screen buffer — open in
   a full-screen modal that resizes the underlying PTY to fill the modal.
 - Interactive commands (gemini-cli, claude-cli, `cat`, `read`, Python REPL) run
@@ -91,9 +99,9 @@ There are two test tiers:
 cd frontend
 
 npm run test:visual         # 40 functional + motion regression tests (~3 min)
-npm run test:e2e            # 55 end-to-end human-workflow tests with
+npm run test:e2e            # 57 end-to-end human-workflow tests with
                             # screenshots + screencasts + pixel goldens
-                            # (includes 15 SSH Path B tests that spin up
+                            # (includes 16 SSH Path B tests that spin up
                             # a userspace sshd on 127.0.0.1:2222) (~6 min)
 npm run test:all            # both, in sequence
 npm run test:e2e:update     # regenerate golden screenshots
