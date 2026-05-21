@@ -4,6 +4,7 @@ import TuiModal from './TuiModal';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SerializeAddon } from '@xterm/addon-serialize';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { TerminalSquare, Plus, Folder, Hash, X, ChevronDown, Maximize2, Minimize2, Server } from 'lucide-react';
 import './index.css';
@@ -434,50 +435,112 @@ function App() {
     ws.send(JSON.stringify({ type: 'resize', cols, rows, isTui }));
   };
 
+  // attachTerminal — call when the terminal needs to be hosted by a real
+  // DOM parent (live cell container OR TUI modal container).
+  //   - First call: terminal.open(parent), load FitAddon and WebglAddon.
+  //   - Subsequent calls with a different parent: move the existing
+  //     terminal.element into the new parent; addons stay loaded.
+  //
+  // The WebglAddon eliminates a class of rendering bugs the DOM renderer
+  // suffers from. The DOM renderer positions the cursor overlay div with
+  // `left = col * cellWidth`. JetBrains Mono at 13px produces a fractional
+  // cellWidth (~7.81px), and the accumulated rounding error visibly
+  // misaligns the cursor block (it straddles two characters in nvim
+  // after enough keystrokes). The WebGL renderer draws every cell at
+  // integer pixel boundaries on a single canvas, so cursor placement is
+  // always pixel-perfect.
+  //
+  // The addon is loaded LAZILY (only when first attached to a real
+  // parent) because it requires terminal.element.ownerDocument and a
+  // visible container. Falls back silently to the DOM renderer if
+  // WebGL is unavailable (older browsers, no GPU, software rendering).
+  const attachTerminal = (entry, parent) => {
+    const { terminal, fitAddon } = entry;
+    let didMount = false;
+    if (!terminal.element) {
+        terminal.open(parent);
+        didMount = true;
+    } else if (terminal.element.parentElement !== parent) {
+        parent.innerHTML = '';
+        parent.appendChild(terminal.element);
+        didMount = true;
+    } else {
+        // Already attached here; nothing to do.
+        return;
+    }
+    // Wait one paint frame so the parent's layout is settled and
+    // `parent.clientWidth/clientHeight` reports its FINAL size. Without
+    // this delay, fitAddon may measure the parent before CSS has
+    // applied (e.g., the TUI modal that's just appeared but hasn't
+    // had its 90vw/85vh layout computed yet), giving us a tiny
+    // initial size that WebGL then sticks to.
+    const doFitAndWebGL = () => {
+        try { fitAddon.fit(); } catch {}
+        if (!terminal._tb_webglLoaded) {
+            try {
+                const webgl = new WebglAddon();
+                webgl.onContextLoss(() => {
+                    try { webgl.dispose(); } catch {}
+                    terminal._tb_webglLoaded = false;
+                });
+                terminal.loadAddon(webgl);
+                terminal._tb_webglLoaded = true;
+                // Refit AFTER WebGL takes over so the canvas matches the
+                // current cell grid. WebglAddon listens for terminal
+                // resize events and resizes its canvas accordingly, so
+                // any subsequent fit() propagates correctly.
+                try { fitAddon.fit(); } catch {}
+            } catch (e) {
+                if (typeof console !== 'undefined') console.warn('[xterm] WebGL renderer unavailable, falling back to DOM:', e?.message || e);
+            }
+        } else if (didMount) {
+            // Already-loaded WebGL: after re-attach to a new parent the
+            // canvas needs a refresh + resize cycle.
+            try { fitAddon.fit(); } catch {}
+            try { terminal.refresh(0, terminal.rows - 1); } catch {}
+        }
+    };
+    if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(doFitAndWebGL);
+    } else {
+        doFitAndWebGL();
+    }
+  };
+
   const getOrCreateTerminal = (sessionId, cellId = null) => {
     const key = `${sessionId}-${cellId}`;
     if (sessionTerminals.current[key]) return sessionTerminals.current[key];
     const terminal = new Terminal({
       theme: { background: '#000000', foreground: '#e0e5ff', cursor: '#00ecec' },
       convertEol: true, cursorBlink: false, cursorStyle: 'block',
-      // Font fallback chain for the live xterm. We want JetBrains Mono
-      // for the Latin/programming glyphs, but TUI apps (nvim with NvChad,
-      // p10k prompts, etc.) use Powerline / Nerd Font glyphs in the
-      // Unicode private-use area. Browsers fall back per-glyph through
-      // the chain, so listing common Nerd-Font-bearing families AFTER
-      // JetBrains Mono gives us nice typography for code AND working
-      // icons for status lines. If the user has none of these installed,
-      // tofu blocks appear (better than overlapping or wrong glyphs).
+      // Font fallback chain. JetBrains Mono for Latin/programming
+      // glyphs; common Nerd Font families AFTER it so TUI apps that use
+      // Powerline / private-use glyphs (nvim+NvChad, p10k, lazygit,
+      // etc.) render correctly when a Nerd Font is installed. Falls
+      // back to monospace if none are present.
       fontFamily: '"JetBrains Mono", "JetBrainsMono Nerd Font", "MesloLGS NF", "Hack Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font", "Apple Color Emoji", monospace',
       fontSize: 13, allowProposedApi: true,
       rows: 24, cols: 120,
-      // Known issue: JetBrains Mono at 13px → cellWidth=~7.81 (fractional).
-      // xterm's DOM renderer positions the cursor overlay at
-      // `left = col * cellWidth` and after many cursor moves the
-      // accumulated rounding error causes the cursor block to straddle
-      // two characters instead of sitting on one. We tried letterSpacing
-      // to pad cells to an integer width, but xterm's step quantization
-      // skips 8px (7.8 → 8.8) so we couldn't snap cleanly without
-      // losing 17 cols of width. Documented in docs/known-issues.md;
-      // proper fix requires switching to @xterm/addon-webgl which has
-      // open compat issues with our xterm pin.
     });
-    if (typeof document !== 'undefined') {
-        const div = document.createElement('div');
-        div.style.position = 'absolute'; div.style.left = '-9999px';
-        terminal.open(div);
-    }
+    // DELIBERATELY do NOT terminal.open() here. The terminal stays
+    // detached until attachTerminal() is called by NotebookCell or
+    // TuiModal with a real, visible parent. Opening off-screen first
+    // (which the previous implementation did) gave the terminal an
+    // initial small size that the WebGL canvas got stuck at — modal
+    // would open at full size but the canvas stayed tiny in the
+    // corner. xterm.js buffers writes that arrive before open(), so
+    // pre-open writes are fine.
     const fitAddon = new FitAddon();
     const serializeAddon = new SerializeAddon();
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(serializeAddon);
-    terminal.onData(data => { 
+    terminal.onData(data => {
         if (sessionRunningRef.current[sessionId]) {
             const ws = sessionSocketsRef.current[sessionId];
-            if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'input', data })); 
+            if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'input', data }));
         }
     });
-    sessionTerminals.current[key] = { terminal, fitAddon, serializeAddon };
+    sessionTerminals.current[key] = { terminal, fitAddon, serializeAddon, attach: (parent) => attachTerminal(sessionTerminals.current[key], parent) };
     return sessionTerminals.current[key];
   };
 
