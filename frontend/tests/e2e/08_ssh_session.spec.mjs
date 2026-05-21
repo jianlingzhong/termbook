@@ -406,6 +406,32 @@ test.describe('SSH session — on by default', () => {
         expect(last.output).toContain('STILL_REMOTE');
     });
 
+    test('O: first-token Tab completes a remote command name (PATH lookup)', async ({ page }, testInfo) => {
+        // The SSH integration's Tab dispatches on token position: first token = COMMAND
+        // (executable on remote PATH + shell builtins/aliases/functions),
+        // later tokens = file/dir glob in remote cwd.
+        // Verifies a single short prefix like `ec` completes to `echo`
+        // (a builtin/exec present on every Unix system) on the remote.
+        await gotoFreshSession(page);
+        await loginSsh(page);
+
+        const inp = page.locator('.chat-input-wrapper textarea').first();
+        await inp.focus();
+        await inp.fill('ec');
+        await page.keyboard.press('Tab');
+        await page.waitForTimeout(800);
+        const completed = await page.evaluate(() => document.querySelector('.chat-input-wrapper textarea')?.value);
+        await shot(page, testInfo, '01_cmd_completion');
+
+        // Should have completed `ec` → some command starting with `ec`.
+        // `echo` is the most common; allow any `ec*` candidate (avoids
+        // brittleness across remote shells).
+        expect(completed).toMatch(/^ec[a-z_-]/);
+
+        await page.keyboard.press('Escape');
+        await inp.fill('');
+    });
+
     test('N: top-header SSH chip + sidebar SSH indicator surface session state', async ({ page }, testInfo) => {
         // Two visibility checks: the always-visible orange chip in the top
         // header (next to the pwd breadcrumb) showing the SSH host, AND the
