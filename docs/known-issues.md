@@ -128,31 +128,27 @@ We could detect mid-cell output that doesn't follow a `start` and route
 it elsewhere, but the implementation is gnarly and the use case is
 edge-y.
 
-### Cursor in nvim drifts off-grid after multiple j/k presses
+### ✅ Cursor in nvim used to drift off-grid after multiple j/k presses
 
-**Symptom**: while navigating in nvim with j/k arrow keys, the cursor
-block (or bar) starts to render between character cells instead of
+Used to be: while navigating in nvim with j/k arrow keys, the cursor
+block (or bar) would start to render between character cells instead of
 sitting on top of one — visible as a half-block straddling two chars.
 
-**Cause**: xterm.js's DOM renderer computes cellWidth from font
-metrics. JetBrains Mono at 13px → cellWidth = ~7.81px (fractional).
-The cursor overlay is an absolutely-positioned div at
-`left = col * cellWidth`. After many cursor moves the accumulated
-rounding error causes sub-pixel drift.
+Cause: xterm.js's DOM renderer computed cellWidth from font metrics.
+JetBrains Mono at 13px → cellWidth = ~7.81px (fractional). The cursor
+overlay was an absolutely-positioned div at `left = col * cellWidth`.
+After many cursor moves the accumulated rounding error caused
+sub-pixel drift.
 
-**Tried fixes**:
-- `letterSpacing` to pad cellWidth to integer — xterm quantizes
-  letterSpacing in steps that skip 8px (goes 7.8 → 8.8), so we
-  couldn't snap cleanly without losing ~17 columns of width.
-- Switching to `@xterm/addon-webgl` (which renders at integer pixel
-  boundaries) — works briefly then doesn't fit the modal container
-  correctly. The webgl addon version 0.19 has compatibility issues
-  with our `xterm` 5.3 pin even after upgrading to `@xterm/xterm` 5.5.
+Resolved by switching to `@xterm/addon-webgl` — see
+[decisions.md#xterm-webgl](decisions.md#xterm-webgl). The WebGL
+renderer draws every cell at integer pixel boundaries on a canvas, so
+the cursor is always pixel-aligned. The fix is verified by an e2e test
+that asserts cellWidth is an integer in the modal terminal.
 
-**Workaround**: doesn't break functionality — file content, cursor
-position semantically, all keystrokes work correctly. Purely visual.
-Will be resolved when we migrate to `@xterm/xterm` v6 + WebglAddon
-v0.20 in a future cleanup.
+(In environments without GPU/WebGL — older browsers, headless Chromium
+without `--enable-webgl`, software rendering — xterm silently falls
+back to DOM and the cursor drift returns. Acceptable degradation.)
 
 ### Long-running commands stream nothing for a few seconds
 
