@@ -1023,9 +1023,23 @@ function App() {
               <span className="completion-hint-kbd"><kbd>Tab</kbd> to cycle</span>
             </div>
           )}
-          <div className={`chat-input-wrapper${isPassthrough ? ' is-passthrough' : ''}${activeTuiState ? ' is-tui' : ''}`}>
+          <div className={`chat-input-wrapper${isPassthrough ? ' is-passthrough' : ''}${activeTuiState ? ' is-tui' : ''}${sessionSshActive[activeSessionId] ? ' is-ssh' : ''}`}>
             <span className="pwd-prompt-prefix">
-              {isPassthrough ? <span className="running-spinner" aria-hidden="true" /> : <span>termbook ❯</span>}
+              {isPassthrough ? (
+                <span className="running-spinner" aria-hidden="true" />
+              ) : sessionSshActive[activeSessionId] && sessionSshHosts[activeSessionId] ? (
+                // In Path B, replace the generic "termbook" prefix with a
+                // remote-host badge so the user sees, right next to where
+                // they're typing, that this command will be sent to the
+                // remote shell — not to the local machine.
+                <span className="pwd-prompt-prefix-ssh" title={`Sending to SSH session: ${sessionSshHosts[activeSessionId]}`}>
+                  <Server size={13} />
+                  <span className="pwd-prompt-prefix-ssh-host">{sessionSshHosts[activeSessionId]}</span>
+                  <span className="pwd-prompt-prefix-arrow">❯</span>
+                </span>
+              ) : (
+                <span>termbook ❯</span>
+              )}
             </span>
             <textarea
                 ref={inputRef} value={inputValue}
