@@ -436,7 +436,16 @@ function App() {
     const terminal = new Terminal({
       theme: { background: '#000000', foreground: '#e0e5ff', cursor: '#00ecec' },
       convertEol: true, cursorBlink: false, cursorStyle: 'block',
-      fontFamily: '"JetBrains Mono", monospace', fontSize: 13, allowProposedApi: true,
+      // Font fallback chain for the live xterm. We want JetBrains Mono
+      // for the Latin/programming glyphs, but TUI apps (nvim with NvChad,
+      // p10k prompts, etc.) use Powerline / Nerd Font glyphs in the
+      // Unicode private-use area. Browsers fall back per-glyph through
+      // the chain, so listing common Nerd-Font-bearing families AFTER
+      // JetBrains Mono gives us nice typography for code AND working
+      // icons for status lines. If the user has none of these installed,
+      // tofu blocks appear (better than overlapping or wrong glyphs).
+      fontFamily: '"JetBrains Mono", "JetBrainsMono Nerd Font", "MesloLGS NF", "Hack Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font", "Apple Color Emoji", monospace',
+      fontSize: 13, allowProposedApi: true,
       rows: 24, cols: 120, rendererType: 'dom'
     });
     if (typeof document !== 'undefined') {

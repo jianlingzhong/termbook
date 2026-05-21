@@ -306,6 +306,42 @@ A fourth indicator (top-header chip) was tried for one commit then
 removed: with the input-prefix badge in place, a header chip just
 duplicates information ~200px above with no new value.
 
+### ✅ Ctrl+D in SSH did nothing visible, didn't actually exit
+
+Used to be: pressing Ctrl+D in SSH chat input sent `\x04` to the PTY.
+On many remote shells (zsh with vi-mode, custom configs) ^D is bound
+to `list-choices` not EOF, so it silently did nothing. The badge
+stayed visible. Trying to ssh again hung forever.
+
+Resolved by Ctrl+D synthesizing a real `exit` cell submission instead
+of writing raw bytes (see
+[decisions.md#ssh-ctrl-d-exit-cell](decisions.md#ssh-ctrl-d-exit-cell)).
+The user sees an "exit" cell appear (visible feedback), the cell
+lifecycle correctly tears down SSH state, and the next ssh works.
+
+### ✅ nvim rendered inline with broken layout
+
+Used to be: opening `nvim file.txt` rendered the file inline in the
+cell with content cut off, status line orphaned, and a perpetually
+spinning cell.
+
+Resolved by pre-promoting known TUI apps to the modal at command-start
+time (see [decisions.md#tui-pre-promote](decisions.md#tui-pre-promote)).
+Modern neovim doesn't emit `\x1b[?1049h`, so the alt-screen
+auto-detect never fires. The curated `KNOWN_TUI_COMMANDS` list catches
+nvim/vim/emacs/htop/less/etc. and opens the modal before the app
+starts drawing.
+
+### ✅ Local prompt prefix said meaningless "termbook"
+
+Used to be: when not in SSH, the chat input prefix showed `termbook ❯`,
+a generic placeholder. Once SSH prefix became `host ❯`, the local
+prefix should parallel it.
+
+Resolved: local prefix now shows the actual hostname (see
+[decisions.md#local-prompt-hostname](decisions.md#local-prompt-hostname)).
+`os.hostname()` from the backend, `.local` suffix stripped on macOS.
+
 ### ✅ First-token Tab completion didn't work for remote commands
 
 Used to be: `gi<Tab>` (or any partial command name) returned nothing on
