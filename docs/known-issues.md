@@ -128,6 +128,32 @@ We could detect mid-cell output that doesn't follow a `start` and route
 it elsewhere, but the implementation is gnarly and the use case is
 edge-y.
 
+### Cursor in nvim drifts off-grid after multiple j/k presses
+
+**Symptom**: while navigating in nvim with j/k arrow keys, the cursor
+block (or bar) starts to render between character cells instead of
+sitting on top of one — visible as a half-block straddling two chars.
+
+**Cause**: xterm.js's DOM renderer computes cellWidth from font
+metrics. JetBrains Mono at 13px → cellWidth = ~7.81px (fractional).
+The cursor overlay is an absolutely-positioned div at
+`left = col * cellWidth`. After many cursor moves the accumulated
+rounding error causes sub-pixel drift.
+
+**Tried fixes**:
+- `letterSpacing` to pad cellWidth to integer — xterm quantizes
+  letterSpacing in steps that skip 8px (goes 7.8 → 8.8), so we
+  couldn't snap cleanly without losing ~17 columns of width.
+- Switching to `@xterm/addon-webgl` (which renders at integer pixel
+  boundaries) — works briefly then doesn't fit the modal container
+  correctly. The webgl addon version 0.19 has compatibility issues
+  with our `xterm` 5.3 pin even after upgrading to `@xterm/xterm` 5.5.
+
+**Workaround**: doesn't break functionality — file content, cursor
+position semantically, all keystrokes work correctly. Purely visual.
+Will be resolved when we migrate to `@xterm/xterm` v6 + WebglAddon
+v0.20 in a future cleanup.
+
 ### Long-running commands stream nothing for a few seconds
 
 Output is buffered up to ~64KB before being flushed. For commands that
