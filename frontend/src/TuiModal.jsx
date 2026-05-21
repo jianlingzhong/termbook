@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import 'xterm/css/xterm.css';
+import '@xterm/xterm/css/xterm.css';
 
 export default function TuiModal({ activeTerminal, requestResize }) {
   const terminalRef = useRef(null);
