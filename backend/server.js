@@ -147,7 +147,7 @@ function calculateMinSize(session) {
 function handleResize(session) {
     if (!session.ptyProcess) return;
     const { cols, rows } = calculateMinSize(session);
-    debugLog(`[RESIZE] session ${session.id} -> ${cols}x${rows}`);
+    debugLog(`[RESIZE] session ${session.id} -> ${cols}x${rows} (isTuiActive=${session.isTuiActive}, clients=${session.clients.size})`);
     try {
         session.ptyProcess.resize(cols, rows);
         if (session.headlessTerminal) {
@@ -657,28 +657,15 @@ function attachPtyHandlers(session) {
               if (tuiCell) tuiCell.usedTui = true;
               debugLog(`[TUI_PROMOTE] session ${sessionId} cellId=${session.activeCellId} signals=${JSON.stringify(s)}`);
               for (const ws of session.clients) ws.send(JSON.stringify({ type: 'tui_enter', cellId: session.activeCellId }));
-              // After the modal opens, the frontend's modal window
-              // animates open over ~200ms (CSS transition on .tui-window),
-              // and the fitAddon may fit at intermediate sizes. The PTY
-              // gets resized multiple times as the modal grows, and TUI
-              // apps that started drawing before the resize can end up in
-              // half-redrawn states (e.g., nvim drew status line at row
-              // 22 of an old 24-row screen, but the modal is now 42 rows
-              // → 19 empty rows below the status line).
-              //
-              // We send two redraw kicks: one quick (200ms — covers most
-              // cases), and a follow-up (800ms — after the CSS transition
-              // and any subsequent fits have settled). Each kick writes
-              // \x0c (Ctrl+L) which most TUIs interpret as "clear &
-              // redraw". For nvim/vim specifically this triggers a full
-              // repaint at the current terminal size.
-              for (const delay of [200, 800]) {
-                  setTimeout(() => {
-                      if (session.isTuiActive && session.ptyProcess) {
-                          try { session.ptyProcess.write('\x0c'); } catch (e) {}
-                      }
-                  }, delay);
-              }
+              // Note: we previously sent `\x1b[18t` (CSI window-size
+              // query) here to nudge nvim into a full redraw at the new
+              // post-modal size. Removed because:
+              //   - classic vim treats it as literal `8t` input chars
+              //     and inserts them into the buffer (test F caught this)
+              //   - nvim's SIGWINCH handler already does the right thing
+              //     when PTY resize fires after the modal opens
+              // Any redraw race that remains is now nvim-side and not
+              // worth fighting from our end.
           }
       }
       if (dataStr.includes('\x1b[?1049l')) {

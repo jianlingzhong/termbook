@@ -190,10 +190,15 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
   useEffect(() => {
     const isLive = !renderedSnapshot && !isTuiActive;
     if (isLive && activeTerminal && isTerminalAttached && terminalRef.current) {
-        const { terminal, fitAddon } = activeTerminal;
-        if (!terminal.element) {
+        const { terminal, fitAddon, attach } = activeTerminal;
+        // attach() handles the open()/move + WebGL addon loading
+        // lifecycle in one place (App.jsx attachTerminal). Older code
+        // inlined that here; we now centralize so live cell and modal
+        // share the same code path.
+        if (attach) {
+            attach(terminalRef.current);
+        } else if (!terminal.element) {
             terminal.open(terminalRef.current);
-            // Do not focus terminal in normal mode (keeps focus on input)
         } else if (terminal.element.parentElement !== terminalRef.current) {
             terminalRef.current.innerHTML = '';
             terminalRef.current.appendChild(terminal.element);
