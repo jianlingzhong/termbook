@@ -99,7 +99,7 @@ There are two test tiers:
 cd frontend
 
 npm run test:visual         # 40 functional + motion regression tests (~3 min)
-npm run test:e2e            # 57 end-to-end human-workflow tests with
+npm run test:e2e            # 59 end-to-end human-workflow tests with
                             # screenshots + screencasts + pixel goldens
                             # (includes 16 SSH Path B tests that spin up
                             # a userspace sshd on 127.0.0.1:2222) (~6 min)
