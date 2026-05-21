@@ -799,9 +799,18 @@ function startCommand(session, cellId, commandData) {
     });
     for (const ws of session.clients) if (ws.readyState === 1) ws.send(newCellMsg);
     if (session.tailBuf.length > 0 && !session.tailBuf.includes('\x1b[2J')) {
-        session.headlessTerminal.write(session.tailBuf);
-        const outputMsg = JSON.stringify({ type: 'output', data: session.tailBuf, cellId: cellId });
-        for (const ws of session.clients) if (ws.readyState === 1) ws.send(outputMsg);
+        // In an the active SSH integration SSH cell, tailBuf at this point contains the
+        // remote shell's next-prompt redraw (drawn between cells). It's
+        // visual noise — the user doesn't care that the remote shell
+        // re-printed "~  ❯" before they hit Enter. Discard it AND don't
+        // write it into the new headlessTerminal.
+        // For local cells, this is residual output that legitimately
+        // belongs in the next cell.
+        if (!inSshContext) {
+            session.headlessTerminal.write(session.tailBuf);
+            const outputMsg = JSON.stringify({ type: 'output', data: session.tailBuf, cellId: cellId });
+            for (const ws of session.clients) if (ws.readyState === 1) ws.send(outputMsg);
+        }
         session.tailBuf = ""; session.sentPos = 0;
     } else { session.tailBuf = ""; session.sentPos = 0; }
     // Send '\r' only (not '\r\n'). The TTY line discipline maps '\r' to '\n'
