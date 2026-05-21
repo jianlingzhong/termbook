@@ -26,10 +26,21 @@ export default function TuiModal({ activeTerminal, requestResize }) {
                 if (requestResize) requestResize(cols, rows);
                 window.dispatchEvent(new CustomEvent('tui-resize-request', { detail: { cols, rows }}));
             }
+            // Multiple refresh kicks: terminal.refresh(0, rows-1) tells
+            // the renderer to repaint all visible rows. With WebGL the
+            // canvas needs to be invalidated; doing it after a frame
+            // ensures the new dimensions are observed.
             requestAnimationFrame(() => {
                 terminal.focus();
                 terminal.refresh(0, terminal.rows - 1);
             });
+            // A second refresh after a longer delay — covers the case
+            // where the TUI app (nvim) sent its initial draw at the
+            // pre-resize size and needs a nudge to repaint at the
+            // current size.
+            setTimeout(() => {
+                try { terminal.refresh(0, terminal.rows - 1); } catch {}
+            }, 400);
         } catch (e) {
             console.error("TUI Fit error:", e);
         }
@@ -74,22 +85,23 @@ export default function TuiModal({ activeTerminal, requestResize }) {
             <div className="tui-traffic-light green" onClick={() => setIsMaximized(!isMaximized)}></div>
           </div>
         </div>
-        <div className="tui-terminal-container" ref={el => { 
-            if (el && activeTerminal?.terminal) { 
+        <div className="tui-terminal-container" ref={el => {
+            if (el && activeTerminal?.terminal) {
                 const term = activeTerminal.terminal;
-                if (term.element && term.element.parentElement !== el) {
-                    el.innerHTML = '';
-                    el.appendChild(term.element);
-                    term.focus();
-                    terminalRef.current = el;
+                // attach() (provided by App.jsx getOrCreateTerminal)
+                // handles open/move + WebGL load in one place. Same
+                // code path as the live cell.
+                if (activeTerminal.attach) {
+                    activeTerminal.attach(el);
                 } else if (!term.element) {
                     term.open(el);
-                    term.focus();
-                    terminalRef.current = el;
-                } else {
-                    terminalRef.current = el;
+                } else if (term.element.parentElement !== el) {
+                    el.innerHTML = '';
+                    el.appendChild(term.element);
                 }
-            } 
+                term.focus();
+                terminalRef.current = el;
+            }
         }} />
       </div>
     </div>
