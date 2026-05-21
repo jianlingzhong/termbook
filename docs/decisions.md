@@ -1141,26 +1141,27 @@ See:
 
 ---
 
-### Always-visible SSH session indicators {#ssh-visibility}
+### SSH session indicators in three deliberate places {#ssh-visibility}
 
-**Decision**: when in an active Path B SSH session, ALWAYS show the
-remote host in THREE places, all in the same orange:
+**Decision**: when in an active Path B SSH session, show the remote
+host in exactly THREE places, all in the same orange. Each placement
+answers a DIFFERENT question:
 
-1. **Top header**: orange `🖥 user@host` chip next to pwd breadcrumb.
-2. **Sidebar**: small orange Server-icon + left border on the active
-   session's entry (and any other sidebar entries that are in SSH).
-3. **Input prompt prefix**: the generic cyan `termbook ❯` is REPLACED
-   with orange `🖥 host ❯`, directly to the left of the typed text.
-   The input wrapper border also tints orange.
+1. **Input prompt prefix** (`🖥 host ❯` replacing the cyan `termbook ❯`,
+   with the input wrapper border tinted orange too) — answers "what I
+   type now: where does it go?". Sits exactly where the user's eyes are
+   while typing. Primary safety signal.
+2. **Per-cell SSH chip** (orange `host` chip on each remote cell's
+   header) — answers "this cell I'm looking at in the scroll-back: did
+   it run remotely?". Useful when reviewing past output.
+3. **Sidebar Server icon + orange left border** on session entries —
+   answers "of my N open sessions, which ones are inside SSH?".
+   Orientation across sessions.
 
-**Why three**: the per-cell SSH chip is only visible when looking at
-cell headers. The top-header chip and sidebar indicator are for
-orientation when scanning the workspace. But the user's eyes are on
-the INPUT BOX while typing — that's the most important place to show
-"this command will be sent to REMOTE, not local". Top-of-screen
-indicators don't catch the eye when you're mid-thought typing. The
-input-prefix badge is the safety net against accidental "I thought I
-was local".
+**Deliberately NOT shown**: a top-header chip next to the pwd breadcrumb.
+We tried it. With the input-prefix badge in place, a top-header chip
+just duplicates the same information ~200px away — visual clutter
+without new value.
 
 **Implementation**:
 - Backend `session_init` includes `sshActive` (bool) and `sshHost`
@@ -1168,18 +1169,23 @@ was local".
 - New WS message `ssh_state` broadcast on the two transitions
   (`SSH_INJECT_OK` → active=true, `SSH_END` → active=false).
 - Frontend tracks `sessionSshActive[id]` and `sessionSshHosts[id]`.
-- Top-header chip renders when both `sshActive && sshHost` for the
-  active session.
-- Sidebar li gets `className 'in-ssh'` + nested `.session-ssh-indicator`
-  when that session is in SSH.
 - Chat-input-wrapper gets `className 'is-ssh'` for the orange border
   tint; the prefix slot conditionally renders `.pwd-prompt-prefix-ssh`
   with Server icon + host + ❯.
+- Sidebar li gets `className 'in-ssh'` + nested `.session-ssh-indicator`
+  when that session is in SSH.
+- Per-cell chip lives in `NotebookCell.jsx`, driven by `remoteHost`
+  prop.
 
-**Color**: orange (matches the per-cell SSH chip), distinct from cyan
-(pwd/git breadcrumb and the local prompt prefix) and purple (git chip).
-The shared orange across all four placements creates a unified visual
-language for "remote".
+**Color**: orange (`#fdba74`), distinct from cyan (pwd/git breadcrumb,
+local prompt prefix) and purple (git chip). One color across all three
+placements creates a unified visual language for "remote".
+
+**Don't** add a fourth indicator without thinking about which question
+it answers. We had a top-header chip for one commit and you (correctly)
+called out that 4 places was noise. The three-placement model has a
+clean rationale; adding a fourth needs to introduce a new dimension,
+not duplicate one.
 
 ---
 
