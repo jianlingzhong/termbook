@@ -147,29 +147,72 @@ function buildRemoteIntegration(salt) {
       `printf '\\033]1338;TBENV;%s\\007\\033]133;D;%s;${salt}\\007\\033]7;file://%s%s\\007' "$__tb_env_pairs" "$__tb_exit" "$__tb_host" "$PWD"; ` +
     `}`,
     // ── Remote completion RPC ──
-    // Backend can call `__tb_complete <reqId> <prefix>` to get path
-    // completions on the REMOTE filesystem at the REMOTE current pwd.
+    // Backend can call `__tb_complete <reqId> <kind> <prefix>` to get
+    // completions on the REMOTE filesystem / shell.
+    // <kind> is "path" (file/dir glob in REMOTE cwd) or "cmd" (executable
+    // on remote PATH or shell builtin/function/alias).
     // Response is wrapped in salted OSC 1339 markers
     // (\033]1339;TBCMP;<reqId>;<salt>;<count>\007 <NL-list> \033]1339;TBCMPEND;<reqId>;<salt>\007)
-    // which the backend recognizes, extracts, and STRIPS from the broadcast
-    // stream so the user never sees them.
+    // which the backend recognizes, extracts, and STRIPS from the
+    // broadcast stream so the user never sees them.
     //
-    // Shell-agnostic: we use globbing (works in bash + zsh) rather than
-    // bash-only \`compgen\`. We append \`/\` to directory matches so the
-    // frontend can decide whether to add a trailing space.
+    // Shell-agnostic: glob expansion works in both bash and zsh. For
+    // command completion we walk PATH (shell-agnostic) PLUS dump aliases
+    // / functions. We append `/` to directory matches so the frontend
+    // can decide whether to add a trailing space.
     `__tb_complete() { ` +
-      `local __tbc_req="$1"; local __tbc_prefix="$2"; ` +
-      // Disable zsh's "no match" error if glob expands to nothing.
+      `local __tbc_req="$1"; local __tbc_kind="$2"; local __tbc_prefix="$3"; ` +
+      // Disable zsh's "no match" error if a glob expands to nothing.
       `setopt local_options no_nomatch 2>/dev/null; ` +
-      `local __tbc_matches=("\${__tbc_prefix}"*); ` +
-      `local __tbc_out=""; local __tbc_count=0; local __tbc_m; ` +
-      `for __tbc_m in "\${__tbc_matches[@]}"; do ` +
-        `if [ -e "$__tbc_m" ] || [ -L "$__tbc_m" ]; then ` +
-          `if [ -d "$__tbc_m" ]; then __tbc_out="\${__tbc_out}\${__tbc_m}/\\n"; ` +
-          `else __tbc_out="\${__tbc_out}\${__tbc_m}\\n"; fi; ` +
-          `__tbc_count=$((__tbc_count+1)); ` +
+      `local __tbc_out=""; local __tbc_count=0; ` +
+      `if [ "$__tbc_kind" = "cmd" ]; then ` +
+        // Walk colon-separated PATH; for each dir, glob ${prefix}* and
+        // include executable regular files. Dedupe with a sort -u.
+        `local __tbc_pdir; local __tbc_e; local __tbc_base; ` +
+        `local __tbc_seen=""; ` +
+        `local IFS=":"; ` +
+        `for __tbc_pdir in $PATH; do ` +
+          `[ -z "$__tbc_pdir" ] && continue; ` +
+          `for __tbc_e in "$__tbc_pdir/$__tbc_prefix"*; do ` +
+            `if [ -x "$__tbc_e" ] && [ ! -d "$__tbc_e" ]; then ` +
+              `__tbc_base="\${__tbc_e##*/}"; ` +
+              // Cheap dedup: append "|name|" and grep before adding.
+              `case "$__tbc_seen" in *"|$__tbc_base|"*) ;; *) ` +
+                `__tbc_seen="$__tbc_seen|$__tbc_base|"; ` +
+                `__tbc_out="\${__tbc_out}\${__tbc_base}\\n"; ` +
+                `__tbc_count=$((__tbc_count+1)); ` +
+              `;; esac; ` +
+            `fi; ` +
+          `done; ` +
+        `done; ` +
+        `unset IFS; ` +
+        // Also include shell builtins/functions/aliases matching the prefix.
+        // `compgen` is bash-only; for zsh fall back to `whence -m` glob.
+        `local __tbc_extra=""; ` +
+        `if [ -n "$BASH_VERSION" ]; then __tbc_extra=$(compgen -bafk -- "$__tbc_prefix" 2>/dev/null | sort -u); fi; ` +
+        `if [ -n "$ZSH_VERSION" ]; then __tbc_extra=$(print -l \${(k)builtins} \${(k)aliases} \${(k)functions} 2>/dev/null | grep "^$__tbc_prefix" | sort -u); fi; ` +
+        `if [ -n "$__tbc_extra" ]; then ` +
+          `local __tbc_x; while IFS= read -r __tbc_x; do ` +
+            `[ -z "$__tbc_x" ] && continue; ` +
+            `case "$__tbc_seen" in *"|$__tbc_x|"*) ;; *) ` +
+              `__tbc_seen="$__tbc_seen|$__tbc_x|"; ` +
+              `__tbc_out="\${__tbc_out}\${__tbc_x}\\n"; ` +
+              `__tbc_count=$((__tbc_count+1)); ` +
+            `;; esac; ` +
+          `done <<< "$__tbc_extra"; ` +
         `fi; ` +
-      `done; ` +
+      `else ` +
+        // path mode (default / legacy): glob ${prefix}*
+        `local __tbc_matches=("\${__tbc_prefix}"*); ` +
+        `local __tbc_m; ` +
+        `for __tbc_m in "\${__tbc_matches[@]}"; do ` +
+          `if [ -e "$__tbc_m" ] || [ -L "$__tbc_m" ]; then ` +
+            `if [ -d "$__tbc_m" ]; then __tbc_out="\${__tbc_out}\${__tbc_m}/\\n"; ` +
+            `else __tbc_out="\${__tbc_out}\${__tbc_m}\\n"; fi; ` +
+            `__tbc_count=$((__tbc_count+1)); ` +
+          `fi; ` +
+        `done; ` +
+      `fi; ` +
       `printf '\\033]1339;TBCMP;%s;${salt};%s\\007%b\\033]1339;TBCMPEND;%s;${salt}\\007' "$__tbc_req" "$__tbc_count" "$__tbc_out" "$__tbc_req"; ` +
     `}`,
     // bash: PROMPT_COMMAND. zsh: precmd function (we set both for safety).
@@ -185,11 +228,16 @@ function buildRemoteIntegration(salt) {
 // Includes a leading Ctrl+U (kill-line) to clear any partial input the user
 // happened to be typing in their remote shell line editor, so our RPC line
 // is always evaluated against an empty input buffer.
-function buildRemoteCompletionRequest(reqId, prefix) {
+//
+// `kind` is 'cmd' for first-token command completion (executable on remote
+// PATH + shell builtins/aliases/functions) or 'path' for everything else
+// (file/dir globs in the current remote pwd).
+function buildRemoteCompletionRequest(reqId, prefix, kind = 'path') {
   // Escape single-quotes in prefix for safe shell single-quoting.
   const safe = prefix.replace(/'/g, `'\\''`);
+  const k = (kind === 'cmd') ? 'cmd' : 'path';
   // \x15 = Ctrl+U (kill-whole-line); \r = execute
-  return `\x15__tb_complete '${reqId}' '${safe}'\r`;
+  return `\x15__tb_complete '${reqId}' '${k}' '${safe}'\r`;
 }
 
 // Parse a TBCMP / TBCMPEND pair out of a buffer. Returns null if no full
