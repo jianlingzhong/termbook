@@ -1143,16 +1143,24 @@ See:
 
 ### Always-visible SSH session indicators {#ssh-visibility}
 
-**Decision**: when in an active Path B SSH session, ALWAYS show:
-- An orange `🖥 user@host` chip in the top header (next to pwd
-  breadcrumb).
-- A small orange Server-icon + left border on the active session's
-  sidebar entry (and any other sidebar entries that are in SSH).
+**Decision**: when in an active Path B SSH session, ALWAYS show the
+remote host in THREE places, all in the same orange:
 
-**Why**: the per-cell SSH chip is only visible when looking at the cell
-header. The top-of-screen pwd breadcrumb shows REMOTE pwd in Path B,
-but with NO context that it's remote. Users with multiple sessions
-couldn't tell which were inside an SSH session without clicking through.
+1. **Top header**: orange `🖥 user@host` chip next to pwd breadcrumb.
+2. **Sidebar**: small orange Server-icon + left border on the active
+   session's entry (and any other sidebar entries that are in SSH).
+3. **Input prompt prefix**: the generic cyan `termbook ❯` is REPLACED
+   with orange `🖥 host ❯`, directly to the left of the typed text.
+   The input wrapper border also tints orange.
+
+**Why three**: the per-cell SSH chip is only visible when looking at
+cell headers. The top-header chip and sidebar indicator are for
+orientation when scanning the workspace. But the user's eyes are on
+the INPUT BOX while typing — that's the most important place to show
+"this command will be sent to REMOTE, not local". Top-of-screen
+indicators don't catch the eye when you're mid-thought typing. The
+input-prefix badge is the safety net against accidental "I thought I
+was local".
 
 **Implementation**:
 - Backend `session_init` includes `sshActive` (bool) and `sshHost`
@@ -1164,9 +1172,14 @@ couldn't tell which were inside an SSH session without clicking through.
   active session.
 - Sidebar li gets `className 'in-ssh'` + nested `.session-ssh-indicator`
   when that session is in SSH.
+- Chat-input-wrapper gets `className 'is-ssh'` for the orange border
+  tint; the prefix slot conditionally renders `.pwd-prompt-prefix-ssh`
+  with Server icon + host + ❯.
 
 **Color**: orange (matches the per-cell SSH chip), distinct from cyan
-(pwd/git breadcrumb) and purple (git chip).
+(pwd/git breadcrumb and the local prompt prefix) and purple (git chip).
+The shared orange across all four placements creates a unified visual
+language for "remote".
 
 ---
 
