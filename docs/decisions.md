@@ -1086,3 +1086,121 @@ without our state machine knowing.
 
 See `frontend/src/App.jsx:handleCommand` (the new Ctrl-key branch after
 the Tab handler) and tests L, M in `08_ssh_session.spec.mjs`.
+
+---
+
+### Trailing-prompt snapshot trim for remote cells {#ssh-snapshot-trim}
+
+**Decision**: when `remoteHost` is set on a cell, the frontend
+`trimSnapshotRows` helper strips trailing rows that are recognizably
+prompt-only. Done on the frontend, not the backend.
+
+**Why frontend**: the backend captures the snapshot ~300ms after the
+salted finish marker (the cell-close timer), by which time p10k has
+already redrawn the next prompt. Snapshotting EARLIER (synchronously at
+finishMatch) means xterm.js's async write queue may not have processed
+the just-written output bytes yet — we tried this and broke 6 visual
+tests because cells came out empty. Defer the strip to the frontend
+where the rendered HTML is in hand.
+
+**Heuristic** (intentionally narrow, see `NotebookCell.jsx:trimSnapshotRows`):
+
+A row is "prompt-like" only when **all three** hold:
+1. `stripTrailingPrompt: true` was passed (only true when `remoteHost` is set).
+2. The row contains a STRONG prompt signal — at least one of:
+   - Powerline / Nerd-font glyph icon (Unicode private-use areas
+     U+E000..F8FF or U+F0000..10FFFD)
+   - `user@host` pattern (matches p10k right-side prompt)
+   - A prompt character (`❯`, `$`, `#`, `%`)
+3. After removing every known prompt fragment (user@host, prompt char,
+   glyphs, lone `~`, whitespace), nothing meaningful remains.
+
+The strong-signal requirement is what prevents false positives: a row
+that's just `/tmp` (legitimate `pwd` output) doesn't match because it
+has no strong signal. A row that's just `~` doesn't match either (no
+signal). Only rows that visibly look like a prompt get stripped.
+
+**Don't** strip generic "looks like a path" rows — they're often
+legitimate command output (`pwd` printing `/tmp`, `find` printing
+`/var/log/...`).
+
+**Don't** use `String.trim()` to normalize whitespace — JS trim() does
+NOT strip U+00A0 (NBSP), which `serializeAsHTML` emits for column-align
+padding. Use the explicit `replace(/[\s\u00a0]+/g, ' ').replace(/^ +| +$/g, '')`.
+
+Also in `backend/server.js startCommand`: when starting a new cell while
+`inSshContext`, the inter-cell `tailBuf` (containing the remote shell's
+between-prompts redraw) is DROPPED instead of written into the new
+headlessTerminal. Without this, the LEADING prompt fragment leaked into
+each remote cell.
+
+See:
+- `frontend/src/NotebookCell.jsx:trimSnapshotRows`
+- `backend/server.js:startCommand` (the `if (!inSshContext)` branch
+  around line 813)
+
+---
+
+### Always-visible SSH session indicators {#ssh-visibility}
+
+**Decision**: when in an the active SSH integration SSH session, ALWAYS show:
+- An orange `🖥 user@host` chip in the top header (next to pwd
+  breadcrumb).
+- A small orange Server-icon + left border on the active session's
+  sidebar entry (and any other sidebar entries that are in SSH).
+
+**Why**: the per-cell SSH chip is only visible when looking at the cell
+header. The top-of-screen pwd breadcrumb shows REMOTE pwd with the SSH integration active,
+but with NO context that it's remote. Users with multiple sessions
+couldn't tell which were inside an SSH session without clicking through.
+
+**Implementation**:
+- Backend `session_init` includes `sshActive` (bool) and `sshHost`
+  (string|null).
+- New WS message `ssh_state` broadcast on the two transitions
+  (`SSH_INJECT_OK` → active=true, `SSH_END` → active=false).
+- Frontend tracks `sessionSshActive[id]` and `sessionSshHosts[id]`.
+- Top-header chip renders when both `sshActive && sshHost` for the
+  active session.
+- Sidebar li gets `className 'in-ssh'` + nested `.session-ssh-indicator`
+  when that session is in SSH.
+
+**Color**: orange (matches the per-cell SSH chip), distinct from cyan
+(pwd/git breadcrumb) and purple (git chip).
+
+---
+
+### First-token Tab completion via remote PATH {#ssh-tab-cmd}
+
+**Decision**: the `__tb_complete` remote integration function dispatches
+on token position. First token (no spaces in input) = completing a
+COMMAND name → walk `$PATH` for executables + merge shell builtins,
+aliases, functions. Later tokens = path glob in remote cwd.
+
+**Why**: previously `__tb_complete` only globbed `${prefix}*` in cwd, so
+`gi<Tab>` returned nothing because `gi*` doesn't match files in the
+current directory. Real terminals always do command completion as the
+first token.
+
+**Shell-agnostic mechanism** (see `backend/ssh.js:buildRemoteIntegration`):
+
+For 'cmd' kind:
+- Walk colon-separated `$PATH` with a `for ... in` loop and globbing —
+  works in bash + zsh without depending on bash-only `compgen`.
+- For each entry, check `-x` (executable, not a directory).
+- Dedup via a simple `|name|` lookup pattern in a single `__tbc_seen`
+  string (avoids associative arrays which behave differently across
+  shells).
+- Merge in builtins/aliases/functions via:
+  - bash: `compgen -bafk -- "$prefix"`
+  - zsh: `print -l ${(k)builtins} ${(k)aliases} ${(k)functions} | grep "^$prefix"`
+
+For 'path' kind: unchanged — glob `${prefix}*` in cwd.
+
+The frontend doesn't need any special code path; backend returns
+candidates in the same shape as local completion (with `type: 'exec'`
+vs `'file'` for diagnostic purposes).
+
+**Don't** add Tab cycling state on the backend — it lives in the
+frontend (`completionState` in `App.jsx`) and is shared between local
+and remote completion. The backend just returns the candidates.
