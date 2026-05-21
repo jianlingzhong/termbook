@@ -231,7 +231,16 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
   flex-direction: column;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.8);
   border: 1px solid var(--border-light);
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  /* DO NOT add `transition: all` here. The fitAddon inside TuiModal runs
+     immediately on mount and measures the window's CURRENT dimensions to
+     decide the xterm grid size. If the window is animating in (transition
+     on width/height), fitAddon catches an intermediate smaller size →
+     resizes the PTY to that smaller size → the TUI app (notably nvim)
+     draws assuming that smaller screen → when the animation settles and
+     fitAddon re-fits, the TUI app sees a SIGWINCH but has already drawn
+     half the screen at the wrong size, leaving stale rows.
+     A `border-color` transition is fine — that doesn't affect layout. */
+  transition: border-color 0.2s ease;
 }
 
 .tui-window.maximized {

@@ -75,41 +75,89 @@ test.describe('alt-screen TUIs', () => {
         await waitForIdle(page);
     });
 
-    test('nvim is pre-promoted to TUI modal (does NOT emit \\x1b[?1049h)', async ({ page }, testInfo) => {
-        // Critical regression: modern neovim doesn't enter the standard
-        // alt-screen buffer in many configurations — it draws in-place
-        // with cursor positioning. Without pre-promotion, the cell would
-        // render as a normal cell with broken layout (status line
-        // visible but file content cut off because the cell's xterm
-        // wasn't sized for a fullscreen TUI).
+    test('nvim opens in modal (content-based TUI detection)', async ({ page }, testInfo) => {
+        // Catches a class of bugs the old "modal opens? ✓ modal big? ✓"
+        // test missed:
+        //   1. Modal opens but the chrome (header, traffic lights) is missing
+        //   2. nvim draws at one size, modal is another → empty rows below
+        //      where nvim thinks the screen ends
+        //   3. Duplicate status lines (nvim drew at size A, then partial
+        //      redraw at size B)
+        //   4. File content not visible (rendered off-screen due to size mismatch)
         //
-        // We pre-promote based on the FIRST command token: nvim, vim,
-        // emacs, htop, less, etc. The modal opens immediately, modal
-        // xterm is sized correctly, nvim renders properly from frame 1.
-        // Try with `nvim`; skip test if nvim isn't installed.
+        // We test against a small file with KNOWN content (line1..line5) and
+        // assert nvim actually drew those lines into the visible terminal area.
         await gotoFreshSession(page);
         // Probe for nvim availability.
         await page.locator('.chat-input-wrapper textarea').first().fill('which nvim 2>/dev/null && echo NVIM_OK || echo NVIM_MISSING');
         await page.locator('.chat-input-wrapper textarea').first().press('Enter');
         await waitForIdle(page);
         const probe = await lastCellInfo(page);
-        test.skip(probe.output.includes('NVIM_MISSING'), 'nvim not installed in this environment');
+        test.skip(probe.output.includes('NVIM_MISSING'), 'nvim not installed');
 
-        // Create a multi-line test file.
-        await page.locator('.chat-input-wrapper textarea').first().fill('printf "line1\\nline2\\nline3\\nline4\\nline5\\n" > /tmp/tb_nvim_e2e.txt');
+        // Create a test file with DISTINCTIVE content so we can assert
+        // exactly what nvim should be displaying.
+        await page.locator('.chat-input-wrapper textarea').first().fill('printf "NVIM_MARKER_LINE_1\\nNVIM_MARKER_LINE_2\\nNVIM_MARKER_LINE_3\\nNVIM_MARKER_LINE_4\\nNVIM_MARKER_LINE_5\\n" > /tmp/tb_nvim_e2e.txt');
         await page.locator('.chat-input-wrapper textarea').first().press('Enter');
         await waitForIdle(page);
 
         await startCommand(page, 'nvim /tmp/tb_nvim_e2e.txt');
-        // Modal MUST open. If pre-promotion is broken (or nvim's altscreen
-        // detection silently regressed) this is where we catch it.
-        await page.waitForSelector('.tui-modal-overlay', { timeout: 6000 });
-        await page.waitForTimeout(1500); // let nvim finish drawing
+        await page.waitForSelector('.tui-window', { timeout: 8000 });
+        // Wait for the resize race to settle + the forced \x0c redraw to fire.
+        await page.waitForTimeout(2500);
         await shot(page, testInfo, 'nvim_open');
 
-        const modalRect = await page.locator('.tui-window').boundingBox();
-        expect(modalRect.width).toBeGreaterThan(VIEWPORT.width * 0.85);
-        expect(modalRect.height).toBeGreaterThan(VIEWPORT.height * 0.8);
+        // ── Structural assertions ──
+        // Modal chrome must exist (header + traffic lights). If these are
+        // missing, the user can't move/maximize/close the modal.
+        const chrome = await page.evaluate(() => {
+            const w = document.querySelector('.tui-window');
+            return {
+                header: !!document.querySelector('.tui-window-header'),
+                trafficLights: document.querySelectorAll('.tui-traffic-light').length,
+                modalW: w ? w.offsetWidth : 0,
+                modalH: w ? w.offsetHeight : 0,
+            };
+        });
+        expect(chrome.header).toBe(true);
+        expect(chrome.trafficLights).toBe(3);
+        expect(chrome.modalW).toBeGreaterThan(VIEWPORT.width * 0.85);
+        expect(chrome.modalH).toBeGreaterThan(VIEWPORT.height * 0.8);
+
+        // ── Content assertions ──
+        // The file content must actually be VISIBLE in the modal's xterm.
+        // We pull the rendered text out of the xterm rows.
+        const xtermText = await page.evaluate(() => {
+            // xterm's DOM renderer puts each row as a div under .xterm-rows
+            const rows = Array.from(document.querySelectorAll('.tui-window .xterm-rows > div'));
+            return rows.map(r => r.innerText).join('\n');
+        });
+        // Should contain all 5 markers.
+        for (const marker of ['NVIM_MARKER_LINE_1', 'NVIM_MARKER_LINE_2', 'NVIM_MARKER_LINE_3', 'NVIM_MARKER_LINE_4', 'NVIM_MARKER_LINE_5']) {
+            expect(xtermText, `expected nvim to display "${marker}" but it wasn't found in the rendered xterm text`).toContain(marker);
+        }
+
+        // ── Layout assertions: status line is at the BOTTOM ──
+        // nvim's status line contains "NORMAL" (the mode indicator).
+        // Find the row containing it; ensure rows AFTER it are empty
+        // (or just the command line) — i.e., no big empty gap between
+        // status and bottom of visible area.
+        const layout = await page.evaluate(() => {
+            const rows = Array.from(document.querySelectorAll('.tui-window .xterm-rows > div'));
+            const texts = rows.map(r => r.innerText);
+            const normalIdx = texts.findIndex(t => /\bNORMAL\b/.test(t));
+            const rowsBelowStatus = normalIdx >= 0 ? texts.slice(normalIdx + 1) : [];
+            const nonEmptyBelow = rowsBelowStatus.filter(t => t.trim().length > 0).length;
+            return { totalRows: rows.length, normalIdx, rowsBelowStatus: rowsBelowStatus.length, nonEmptyBelow };
+        });
+        expect(layout.normalIdx, 'nvim status line (NORMAL) not found in rendered xterm').toBeGreaterThanOrEqual(0);
+        // After the status line there should be AT MOST 1 row (nvim's
+        // command line `:` for entering commands). If we see 5+ rows
+        // below, it means nvim drew its status at a wrong row and there's
+        // empty space below it (the size-mismatch bug).
+        expect(layout.rowsBelowStatus,
+            `nvim drew status line at row ${layout.normalIdx} but ${layout.rowsBelowStatus} rows exist below it — size mismatch / redraw race`
+        ).toBeLessThanOrEqual(2);
 
         // Quit nvim.
         await page.keyboard.press('Escape');
@@ -122,5 +170,101 @@ test.describe('alt-screen TUIs', () => {
         expect(await page.locator('.tui-modal-overlay').count()).toBe(0);
         const runningCells = await page.locator('.notebook-cell.active-cell').count();
         expect(runningCells).toBe(0);
+    });
+
+    test('nvim navigation (j/k) keeps file content stable across redraws', async ({ page }, testInfo) => {
+        // The user reported a visual artifact where after pressing 'j'
+        // to move the cursor down by one row, a previously-rendered line
+        // would visually disappear from the cell or appear duplicated.
+        // This is symptomatic of xterm.js's DOM renderer getting out of
+        // sync with nvim's redraw commands.
+        //
+        // We test: open nvim with a 40-line file, press 'j' 20 times,
+        // and verify that all 40 file lines are still consistently
+        // present in the rendered xterm rows. No gaps (line N missing
+        // between N-1 and N+1), no duplicates (same line shown twice in
+        // adjacent rows).
+        await gotoFreshSession(page);
+        await page.locator('.chat-input-wrapper textarea').first().fill('which nvim 2>/dev/null && echo NVIM_OK || echo NVIM_MISSING');
+        await page.locator('.chat-input-wrapper textarea').first().press('Enter');
+        await waitForIdle(page);
+        const probe = await lastCellInfo(page);
+        test.skip(probe.output.includes('NVIM_MISSING'), 'nvim not installed');
+
+        // Build a file with numbered DISTINCTIVE lines.
+        await page.locator('.chat-input-wrapper textarea').first().fill('seq 1 40 | awk \'{print "NAV_LINE_" $1}\' > /tmp/tb_nav_test.txt');
+        await page.locator('.chat-input-wrapper textarea').first().press('Enter');
+        await waitForIdle(page);
+
+        await startCommand(page, 'nvim /tmp/tb_nav_test.txt');
+        await page.waitForSelector('.tui-window', { timeout: 8000 });
+        await page.waitForTimeout(1500);
+
+        // Press 'j' 20 times to navigate down.
+        for (let i = 0; i < 20; i++) {
+            await page.keyboard.press('j');
+            await page.waitForTimeout(50);
+        }
+        await page.waitForTimeout(500);
+        await shot(page, testInfo, 'nvim_after_navigation');
+
+        // Pull rendered rows. Each row should contain at most ONE NAV_LINE marker.
+        // Each NAV_LINE_N should appear in adjacent rows in order
+        // (no gaps in the sequence visible on screen).
+        const rows = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('.tui-window .xterm-rows > div')).map(r => r.innerText);
+        });
+        const navMarkers = rows
+            .map((t, i) => {
+                const m = t.match(/NAV_LINE_(\d+)/);
+                return m ? { row: i, n: parseInt(m[1]) } : null;
+            })
+            .filter(Boolean);
+
+        // The sequence of NAV_LINE numbers visible on screen should be
+        // monotonically increasing by 1 from one row to the next.
+        // Gap (e.g., NAV_LINE_5 then NAV_LINE_7) = a row got skipped.
+        // Repeat (e.g., NAV_LINE_5 then NAV_LINE_5) = same line shown
+        // twice.
+        for (let i = 1; i < navMarkers.length; i++) {
+            const prev = navMarkers[i - 1];
+            const cur = navMarkers[i];
+            // Adjacent visible markers should be in adjacent xterm rows
+            // (cur.row === prev.row + 1) and adjacent file lines
+            // (cur.n === prev.n + 1).
+            if (cur.row === prev.row + 1) {
+                expect(cur.n,
+                    `NAV_LINE_${prev.n} (xterm row ${prev.row}) → NAV_LINE_${cur.n} (xterm row ${cur.row}) — expected NAV_LINE_${prev.n + 1}; file line skipped or duplicated`
+                ).toBe(prev.n + 1);
+            }
+        }
+
+        // Quit.
+        await page.keyboard.press('Escape');
+        await page.keyboard.type(':q!');
+        await page.keyboard.press('Enter');
+        await waitForIdle(page, 10000);
+    });
+
+    test('cat (not a TUI) does NOT trigger modal promotion', async ({ page }, testInfo) => {
+        // The content-based detection should NOT trigger on commands that
+        // just stream text. If `cat` (or `ls`, `grep`, `echo`) accidentally
+        // gets promoted, the user's normal cell-stream workflow breaks.
+        await gotoFreshSession(page);
+        await page.locator('.chat-input-wrapper textarea').first().fill('printf "line_a\\nline_b\\nline_c\\n" > /tmp/tb_cat_nottui.txt');
+        await page.locator('.chat-input-wrapper textarea').first().press('Enter');
+        await waitForIdle(page);
+
+        await startCommand(page, 'cat /tmp/tb_cat_nottui.txt');
+        await waitForIdle(page);
+        await shot(page, testInfo, 'cat_done');
+
+        // Modal must NOT have opened at any point.
+        expect(await page.locator('.tui-modal-overlay').count()).toBe(0);
+        // Output should be the file content as a normal cell.
+        const last = await lastCellInfo(page);
+        expect(last.output).toContain('line_a');
+        expect(last.output).toContain('line_b');
+        expect(last.output).toContain('line_c');
     });
 });
