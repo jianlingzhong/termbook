@@ -697,10 +697,33 @@ function App() {
       const ws = sessionSockets[activeSessionId];
       if (ws && ws.readyState === 1) {
         if (e.key === 'd' || e.key === 'D') {
-          // Only EOF when input is empty (otherwise Ctrl+D is "delete-char-or-EOF" in bash).
+          // Ctrl+D on empty input: end the SSH session.
+          //
+          // We DON'T send \x04 directly — many remote shells (zsh with
+          // vi-mode line editor, for instance) bind ^D to `list-choices`
+          // or `delete-char-or-list`, NOT to EOF. So \x04 silently does
+          // nothing on those shells.
+          //
+          // We also don't send raw `exit\r` via {type:'input',...} —
+          // that bypasses the cell lifecycle, so the user sees no
+          // visual feedback and the SSH state machine doesn't update.
+          //
+          // Instead: synthesize a real cell submission for `exit`. The
+          // user sees an "exit" cell appear in the notebook (visible
+          // feedback), the backend startCommand path runs and forwards
+          // the bytes through the normal mechanism (which we've already
+          // proven works for typed `exit`), the salted-marker plumbing
+          // closes the cell + clears sshActive when bash exits.
           if (!inputValue) {
             e.preventDefault();
-            ws.send(JSON.stringify({ type: 'input', data: '\x04' }));
+            const cellId = `cell-${Date.now()}`;
+            setSessionCells(prev => {
+                const currentCells = prev[activeSessionId] || [];
+                if (currentCells.some(c => c.id === cellId)) return prev;
+                return { ...prev, [activeSessionId]: [...currentCells, { id: cellId, command: 'exit', executablePwd: sessionPwds[activeSessionId], output: '', isRunning: true, startedAt: Date.now(), remoteHost: sessionSshHosts[activeSessionId] }] };
+            });
+            setSessionRunning(prev => ({ ...prev, [activeSessionId]: true }));
+            ws.send(JSON.stringify({ type: 'start', data: 'exit', cellId }));
             return;
           }
         } else if (e.key === 'c' || e.key === 'C') {
@@ -1033,7 +1056,7 @@ function App() {
                   <span className="pwd-prompt-prefix-arrow">❯</span>
                 </span>
               ) : (
-                <span>termbook ❯</span>
+                <span>{config.localHostname || 'localhost'} ❯</span>
               )}
             </span>
             <textarea
