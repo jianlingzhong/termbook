@@ -371,6 +371,19 @@ body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-ser
 }
 
 /* REFINED CURSOR FIX */
+/* Font fallback chain for ALL xterm-rendered cells (live + snapshot).
+   TUI apps (nvim+NvChad, p10k prompts, lazygit, etc.) put Powerline /
+   Nerd Font glyphs into the Unicode private-use area; browsers fall
+   back per-glyph through this chain. JetBrains Mono first for Latin
+   and programming chars; common Nerd Font families after; emoji last.
+   If the user has none of the Nerd Fonts installed they'll see tofu
+   blocks (□) — better than overlapping or wrong glyphs. The fix for
+   tofu specifically is to install one of these fonts locally. */
+.xterm, .xterm-rows, .snapshot-output, .snapshot-output * {
+    font-family: "JetBrains Mono", "JetBrainsMono Nerd Font", "MesloLGS NF",
+                 "Hack Nerd Font", "FiraCode Nerd Font", "Symbols Nerd Font",
+                 "Apple Color Emoji", monospace !important;
+}
 .xterm-cursor { visibility: visible !important; opacity: 1 !important; z-index: 1000 !important; }
 .xterm-cursor.xterm-cursor-block { background-color: var(--accent-cyan) !important; outline: 1px solid var(--accent-cyan) !important; }
 .xterm-cursor.xterm-cursor-bar { background-color: var(--accent-cyan) !important; width: 2px !important; }

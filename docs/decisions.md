@@ -1223,3 +1223,112 @@ vs `'file'` for diagnostic purposes).
 **Don't** add Tab cycling state on the backend — it lives in the
 frontend (`completionState` in `App.jsx`) and is shared between local
 and remote completion. The backend just returns the candidates.
+
+---
+
+### Ctrl+D in SSH: synthesize an `exit` cell, don't send raw \x04 {#ssh-ctrl-d-exit-cell}
+
+**Decision**: Ctrl+D on empty chat input during Path B SSH does NOT
+send `\x04` (EOF) to the PTY. Instead it builds a new cell with
+`command: 'exit'` and dispatches it through the normal cell submission
+path (`{type:'start', data:'exit', cellId}`).
+
+**Why not \x04**:
+- Many remote shells (zsh with vi-mode line editor, custom bindkey
+  configurations) bind `^D` to `list-choices`, `delete-char-or-list`,
+  or `vi-cmd-mode`, NOT to EOF. The user's actual machine had
+  `bindkey "^D" list-choices` — `\x04` silently produced completion
+  candidates and nothing else.
+- Even sending the bytes `exit\r` directly via `{type:'input'}` did
+  not work in our PTY chain (still don't fully understand why — bytes
+  reach the PTY per backend logs, but the remote shell never
+  processes them; possibly related to local-bash-stdin handling while
+  ssh is the foreground process). Yet TYPING `exit`+Enter through
+  the normal cell-submit path always works.
+
+**Why a synthesized cell**:
+- The user gets VISIBLE FEEDBACK — an "exit" cell appears in the
+  notebook, which is what they were missing.
+- It runs through `startCommand` which already handles the SSH state
+  machine correctly (closes outer cell, broadcasts `ssh_state`,
+  clears `sessionSshActive`).
+- Reliability — works on every shell because the bytes get written
+  via the same code path that works for user-typed `exit`.
+
+**Don't** try to send raw `\x04` or even raw `exit\r` as an
+`{type:'input'}` message. We tested both; both fail. Use the cell
+submission path.
+
+See `frontend/src/App.jsx` Ctrl+D handler in `handleCommand` (around
+line 700) and `frontend/tests/e2e/08_ssh_session.spec.mjs` Test L.
+
+---
+
+### TUI command pre-promotion (modern nvim doesn't emit alt-screen) {#tui-pre-promote}
+
+**Decision**: at `startCommand` time, if the first command token
+matches a curated list of known TUI apps (vim, nvim, emacs, htop,
+less, etc.), we pre-mark the cell as `usedTui` and immediately
+broadcast `tui_enter` — the TUI modal opens BEFORE the app emits any
+bytes.
+
+**Why**: modern neovim (≥0.9 in many configurations, especially
+NvChad and other heavily-customized distros) does NOT enter the
+standard alt-screen buffer via `\x1b[?1049h`. It draws in-place
+using `\x1b[H` and line-by-line redraws. Verified by capturing the
+PTY chunks: `1049h` literally never appears, only `1049l` on exit.
+
+Without pre-promotion, the cell renders as a normal cell. The
+xterm's row count doesn't match what nvim assumes (24 rows of the
+local TTY). nvim's status line, file content, and modeline all end
+up in the wrong rows. The user sees a partially-drawn nvim with
+content cut off.
+
+**Why a curated list, not a heuristic**:
+- The OLD heuristic was "high ANSI score = inline TUI" — that
+  accidentally promoted gemini-cli/claude-cli/Ink-based CLIs which
+  are genuinely INLINE interactive (they expect cell-style rendering
+  + passthrough input). Promoting those broke them.
+- A curated list keeps known-fullscreen-TUIs (vim/nvim/htop/less)
+  promoted while leaving inline-interactive apps alone.
+- Adding new apps is a one-line change in `KNOWN_TUI_COMMANDS`.
+
+**Detection** (see `firstCommandToken` in `backend/server.js`):
+- Strip leading env-var assignments: `FOO=bar nvim x` → `nvim`.
+- For `ssh ... host cmd` form, the inner `cmd` is matched: `ssh -t
+  host nvim file` → `nvim`.
+- Strip leading path: `/opt/homebrew/bin/nvim` → `nvim`.
+- The list is plain Set membership, ~30 entries.
+
+**Don't** add ambiguous commands (`python`, `node`, `irb`) — those
+are sometimes interactive REPLs (handled by passthrough), sometimes
+running scripts. Only add commands that are ALMOST ALWAYS fullscreen
+TUIs in normal use.
+
+See `backend/server.js` `KNOWN_TUI_COMMANDS` (around line 790) and
+`frontend/tests/e2e/03_alt_screen_tui.spec.mjs` (nvim test).
+
+---
+
+### Local prompt prefix shows actual hostname {#local-prompt-hostname}
+
+**Decision**: the chat input's prompt prefix shows `<hostname> ❯`
+when local (instead of the generic `termbook ❯`), to parallel the
+SSH prefix's `🖥 host ❯`.
+
+**Why**: user feedback — "better to be 'localhost' (or actual
+hostname)". The generic `termbook ❯` was meaningless. With this
+change, the local prefix has the same shape as the SSH prefix, and
+the user instantly sees what host their input goes to.
+
+**Implementation**: backend `/api/config` now returns
+`localHostname: os.hostname()` (with `.local` suffix stripped on
+macOS). Frontend uses it in the prefix slot.
+
+**Don't** include the FQDN — `jianlingzhong-mac2.roam.internal` is
+fine but borderline long. The `.local` strip is the only
+shortening; further trimming risks ambiguity if user has multiple
+similar hosts.
+
+See `backend/server.js:/api/config` and `frontend/src/App.jsx`
+prefix render in `chat-input-wrapper`.

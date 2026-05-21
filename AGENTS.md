@@ -18,13 +18,13 @@ what not to do, where the traps are, and what "done" looks like.
 3. The test suites that matter are:
    - `frontend/tests/visual/*.spec.mjs` (~40 tests) — fast functional +
      motion regressions. Run with `npm run test:visual` (~3 min).
-   - `frontend/tests/e2e/*.spec.mjs` (~55 tests, including 15 SSH Path B
+   - `frontend/tests/e2e/*.spec.mjs` (~57 tests, including 16 SSH Path B
      tests) — full human-workflow E2E with screenshots, video, pixel
      goldens. Run with `npm run test:e2e` (~6 min). The SSH suite needs
      a userspace sshd on 127.0.0.1:2222 — `tests/e2e/ssh-global-setup.mjs`
      handles spinning it up on first run and reuses it on subsequent runs.
    - `npm run test:all` runs both.
-   - **Always 95/95 green** before you claim done.
+   - **Always 97/97 green** before you claim done.
    - The legacy `frontend/tests/*.spec.{js,ts}` is abandoned cruft
      — do not run or modify it.
 4. Before claiming "done": `npm run test:all` must pass green. Show the
@@ -259,7 +259,10 @@ regenerated PNG before committing.
 | Cell flashes a 480px black box | The live-cell sizing fell back to fixed-height. See `NotebookCell.jsx` `cell-output` style branch. Live cells should size by `liveContentRows`, snapshots by `displaySnapshot` rendering. |
 | User's `ll` alias doesn't work | `backend/server.js` `extractUserAliases()` parses `~/.bashrc`, `~/.zshrc`, `~/.aliases` etc. on backend startup. If it didn't get parsed, check the file is readable. |
 | Powerlevel10k prompt leaks into cells | `backend/parser.js` accepts unsalted `133;D` markers ONLY when SSH is not active (the `allowUnsalted` flag in the parser call site). During an active Path B SSH session, only salted markers are accepted — this is intentional so remote shells with their own OSC 133 integration (p10k, atuin) can't spoof cell closes. The pwd marker must accept both `\x07` and `\x1b\\` terminators. |
-| SSH cell never reaches Path B "active" state | `ssr_debug.log` will show `SSH_INJECT` then `SSH_INJECT_TIMEOUT` after 8s. Likely the remote shell isn't bash/zsh OR has output suppression that swallowed our salted marker. Fallback: `sshState='failed'` and the session degrades to today's leaky behavior. Check `backend/ssh.js:buildRemoteIntegration` and verify the snippet runs cleanly in the remote shell by `echo "<snippet>" \| ssh host bash -s`. |
+| SSH cell never reaches Path B "active" state | `ssr_debug.log` will show `SSH_INJECT` then `SSH_INJECT_TIMEOUT` after 12s. Likely the remote shell isn't bash/zsh OR has output suppression that swallowed our salted marker. Fallback: `sshState='failed'` and the session degrades to today's leaky behavior. Check `backend/ssh.js:buildRemoteIntegration` and verify the snippet runs cleanly in the remote shell by `echo "<snippet>" \| ssh host bash -s`. |
+| Ctrl+D in SSH does nothing visible | Don't send `\x04` directly — many remote shells (zsh with vi-mode) bind `^D` to `list-choices`, not EOF. The handler in `frontend/src/App.jsx` synthesizes a real `exit` cell submission instead, which (a) gives the user visible feedback and (b) runs through the normal cell lifecycle that correctly clears SSH state. Raw `{type:'input', data:'exit\r'}` over WS also mysteriously doesn't work — bytes reach the PTY but the remote shell doesn't process them. The cell-submit path always works. |
+| `nvim file.txt` renders inline with broken layout, status line orphaned, file content cut off | Modern neovim doesn't emit `\x1b[?1049h` (alt-screen enter) in many configurations (notably NvChad). Our `KNOWN_TUI_COMMANDS` list in `backend/server.js:startCommand` pre-promotes nvim/vim/htop/less/etc. to the TUI modal at command-start time, before they emit any bytes. If a TUI app you care about is rendering inline, add it to that list. **Don't** generalize this to a heuristic — the curated list is what prevents inline interactive CLIs (gemini-cli, claude-cli) from being incorrectly promoted. |
+| Tofu blocks (□) in TUI status lines / p10k prompts | Powerline / Nerd Font glyphs in Unicode private-use area (U+E000..F8FF) that the user's system fonts don't have. Termbook's font chain in `index.css` includes common Nerd Font names — they'll be used if installed. Install one (e.g. `brew install --cask font-jetbrains-mono-nerd-font`) to fix. |
 | SSH e2e tests fail with "REMOTE HOST IDENTIFICATION HAS CHANGED" | `tests/e2e/ssh-global-setup.mjs` should remove stale entries automatically. If it didn't (e.g. tests aborted mid-setup), run `ssh-keygen -R '[127.0.0.1]:2222' -f ~/.ssh/known_hosts` and re-run. |
 | Backend won't quit (crashes on Ctrl+C) | PTY stdio EIO. Each `pty.spawn` result needs `.onExit()` handler; bare event errors crash Node. |
 | `gemini-cli` exits with "No input provided via stdin" | Backend was launched with `CI=true` in env. The PTY spawn now strips CI / GITHUB_ACTIONS / etc. from the child env — if you see this, that stripping logic regressed. See `spawnPtyForSession` in `server.js`. |
