@@ -74,4 +74,53 @@ test.describe('alt-screen TUIs', () => {
         await page.keyboard.press('Enter');
         await waitForIdle(page);
     });
+
+    test('nvim is pre-promoted to TUI modal (does NOT emit \\x1b[?1049h)', async ({ page }, testInfo) => {
+        // Critical regression: modern neovim doesn't enter the standard
+        // alt-screen buffer in many configurations — it draws in-place
+        // with cursor positioning. Without pre-promotion, the cell would
+        // render as a normal cell with broken layout (status line
+        // visible but file content cut off because the cell's xterm
+        // wasn't sized for a fullscreen TUI).
+        //
+        // We pre-promote based on the FIRST command token: nvim, vim,
+        // emacs, htop, less, etc. The modal opens immediately, modal
+        // xterm is sized correctly, nvim renders properly from frame 1.
+        // Try with `nvim`; skip test if nvim isn't installed.
+        await gotoFreshSession(page);
+        // Probe for nvim availability.
+        await page.locator('.chat-input-wrapper textarea').first().fill('which nvim 2>/dev/null && echo NVIM_OK || echo NVIM_MISSING');
+        await page.locator('.chat-input-wrapper textarea').first().press('Enter');
+        await waitForIdle(page);
+        const probe = await lastCellInfo(page);
+        test.skip(probe.output.includes('NVIM_MISSING'), 'nvim not installed in this environment');
+
+        // Create a multi-line test file.
+        await page.locator('.chat-input-wrapper textarea').first().fill('printf "line1\\nline2\\nline3\\nline4\\nline5\\n" > /tmp/tb_nvim_e2e.txt');
+        await page.locator('.chat-input-wrapper textarea').first().press('Enter');
+        await waitForIdle(page);
+
+        await startCommand(page, 'nvim /tmp/tb_nvim_e2e.txt');
+        // Modal MUST open. If pre-promotion is broken (or nvim's altscreen
+        // detection silently regressed) this is where we catch it.
+        await page.waitForSelector('.tui-modal-overlay', { timeout: 6000 });
+        await page.waitForTimeout(1500); // let nvim finish drawing
+        await shot(page, testInfo, 'nvim_open');
+
+        const modalRect = await page.locator('.tui-window').boundingBox();
+        expect(modalRect.width).toBeGreaterThan(VIEWPORT.width * 0.85);
+        expect(modalRect.height).toBeGreaterThan(VIEWPORT.height * 0.8);
+
+        // Quit nvim.
+        await page.keyboard.press('Escape');
+        await page.keyboard.type(':q!');
+        await page.keyboard.press('Enter');
+        await waitForIdle(page, 10000);
+        await shot(page, testInfo, 'nvim_after_quit');
+
+        // Modal must be gone, cell must have closed (no spin-forever).
+        expect(await page.locator('.tui-modal-overlay').count()).toBe(0);
+        const runningCells = await page.locator('.notebook-cell.active-cell').count();
+        expect(runningCells).toBe(0);
+    });
 });

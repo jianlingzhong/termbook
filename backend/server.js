@@ -773,6 +773,66 @@ function startCommand(session, cellId, commandData) {
     }
 
     session.activeCellId = cellId; session.isTuiActive = false;
+
+    // ── TUI app pre-detection ──
+    // Some terminal apps (especially modern neovim) don't enter the
+    // standard alt-screen buffer (\x1b[?1049h) — they render in-place
+    // with cursor positioning. Without that signal we'd render them as
+    // a normal cell, which displays poorly (the app draws assuming a
+    // 24-row screen but the cell may show different rows, status lines
+    // appear orphaned, file content goes off-screen).
+    //
+    // For a curated list of KNOWN TUI apps (vim/nvim/emacs in TUI mode,
+    // pagers, monitors, file managers, etc.) we pre-promote the cell to
+    // the TUI modal at command-start time, BEFORE the app emits any
+    // bytes. The modal's xterm gets sized correctly, the app renders
+    // into it from the first frame.
+    //
+    // Matching is on the first non-option token of the command line. We
+    // also detect `ssh -t host vim ...` (the trailing remote command is
+    // a TUI). Aggressive false positives (treating gemini-cli as TUI)
+    // were the reason this auto-promotion was removed historically —
+    // the LIST is what keeps it safe now.
+    const KNOWN_TUI_COMMANDS = new Set([
+        'vim', 'vi', 'nvim', 'nano', 'emacs', 'micro', 'helix', 'hx',
+        'less', 'more', 'most', 'pg', 'man', 'info',
+        'top', 'htop', 'btop', 'btm', 'glances', 'iotop', 'iftop',
+        'tig', 'lazygit', 'gitui', 'lazydocker', 'k9s',
+        'ranger', 'mc', 'nnn', 'lf', 'yazi', 'broot',
+        'tmux', 'screen',
+        'mutt', 'neomutt', 'aerc', 'newsboat', 'tin', 'slrn',
+        'ncmpcpp', 'cmus', 'mocp',
+        'crawl', 'cataclysm', 'nethack',
+    ]);
+    function firstCommandToken(cmd) {
+        const tokens = String(cmd || '').trim().split(/\s+/);
+        if (tokens.length === 0) return null;
+        if (tokens[0] === 'ssh') {
+            // Skip ssh options + host, return next token if any.
+            let i = 1;
+            const flagsWithArg = new Set(['-p','-l','-i','-o','-J','-F','-L','-R','-D','-W','-w','-Q','-S','-c','-m','-e','-b','-B','-E','-I','-O']);
+            let sawHost = false;
+            while (i < tokens.length) {
+                const t = tokens[i];
+                if (t === '--') { i++; continue; }
+                if (t.startsWith('-')) {
+                    if (flagsWithArg.has(t) && i + 1 < tokens.length) i += 2;
+                    else i++;
+                    continue;
+                }
+                if (!sawHost) { sawHost = true; i++; continue; }
+                return t; // first token after host = remote command
+            }
+            return null;
+        }
+        // Strip leading env-var assignments like `FOO=bar nvim x`
+        let i = 0;
+        while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
+        return tokens[i] || null;
+    }
+    const tuiToken = firstCommandToken(commandData);
+    const isKnownTui = !!(tuiToken && KNOWN_TUI_COMMANDS.has(tuiToken.replace(/^.*\//, '')));
+
     const newCell = {
         id: cellId,
         command: commandData,
@@ -785,7 +845,14 @@ function startCommand(session, cellId, commandData) {
         // session — the outer `ssh ...` cell itself is NOT tagged this
         // way (it's tagged later with usedSshSession instead).
         remoteHost: inSshContext ? session.sshHost : null,
+        // Pre-mark known TUI apps so the frontend opens the modal
+        // immediately, even if the app never emits \x1b[?1049h.
+        usedTui: isKnownTui || false,
     };
+    if (isKnownTui) {
+        session.isTuiActive = true;
+        debugLog(`[TUI_PROMOTE] session ${session.id} cellId=${cellId} command=${tuiToken} (pre-promoted, no altscreen needed)`);
+    }
     session.cells.push(newCell);
     persistCell(session, newCell);
 
@@ -809,8 +876,17 @@ function startCommand(session, cellId, commandData) {
         cellId,
         command: commandData,
         remoteHost: newCell.remoteHost,
+        // Pre-promoted TUI: frontend opens the modal immediately so the
+        // modal's xterm is sized correctly BEFORE the TUI app starts
+        // drawing. Critical for modern nvim which doesn't enter
+        // alt-screen but still expects a known terminal size.
+        preTui: !!newCell.usedTui,
     });
     for (const ws of session.clients) if (ws.readyState === 1) ws.send(newCellMsg);
+    if (newCell.usedTui) {
+        const tuiMsg = JSON.stringify({ type: 'tui_enter', cellId });
+        for (const ws of session.clients) if (ws.readyState === 1) ws.send(tuiMsg);
+    }
     if (session.tailBuf.length > 0 && !session.tailBuf.includes('\x1b[2J')) {
         // In an the active SSH integration SSH cell, tailBuf at this point contains the
         // remote shell's next-prompt redraw (drawn between cells). It's
@@ -869,7 +945,18 @@ wss.on('connection', (ws, req) => {
         }
       } else if (msg.type === 'input') {
         const s = sessions.get(activeId);
-        if (s) s.ptyProcess.write(msg.data);
+        if (s) {
+            const preview = (msg.data || '').slice(0, 40).replace(/[^\x20-\x7e]/g, c => '\\x' + c.charCodeAt(0).toString(16).padStart(2,'0'));
+            debugLog(`[INPUT] session ${activeId} (${(msg.data||'').length} char): ${preview} | sshState=${s.sshState} ptyAlive=${!!s.ptyProcess}`);
+            try {
+                s.ptyProcess.write(msg.data);
+                debugLog(`[INPUT_WRITTEN] OK`);
+            } catch (e) {
+                debugLog(`[INPUT_WRITE_ERR] ${e.message}`);
+            }
+        } else {
+            debugLog(`[INPUT_NO_SESSION] activeId=${activeId}`);
+        }
       } else if (msg.type === 'resize') {
         ws.requestedCols = msg.cols; ws.requestedRows = msg.rows;
         const s = sessions.get(activeId);
@@ -908,7 +995,12 @@ setInterval(() => {
 }, GC_INTERVAL_MS);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
-app.get('/api/config', (req, res) => res.json(config));
+app.get('/api/config', (req, res) => {
+    // Include localHostname so the frontend can show the actual machine
+    // name in the prompt prefix when not in SSH ("localhost ❯" by default
+    // is more accurate than the generic "termbook ❯").
+    res.json({ ...config, localHostname: os.hostname().replace(/\.local$/, '') });
+});
 app.get('/api/sessions', (req, res) => res.json({ sessions: Array.from(sessions.values()).map(s => ({ id: s.id || "", pwd: s.pwd || "", cells: s.cells || [] })) }));
 app.get('/api/sessions/:id', (req, res) => {
   const s = sessions.get(req.params.id);
