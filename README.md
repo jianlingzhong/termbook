@@ -1,11 +1,11 @@
 # Termbook
 
-A notebook-style web terminal. Each shell command becomes a "cell" with its own
-status, output, timestamp, and history — like Jupyter, but for bash/zsh.
+A notebook-style web terminal. Each shell command becomes a "cell" with its
+own status, output, timestamp, and history — like Jupyter, but for bash/zsh.
 
-Self-hosted, localhost-only. Open-source.
+Self-hosted, localhost-only. MIT licensed.
 
-![termbook screenshot placeholder](screenshots/.gitkeep)
+![Termbook demo](docs/termbook-demo.gif)
 
 ## What it is
 
@@ -30,15 +30,16 @@ Self-hosted, localhost-only. Open-source.
   `--no-termbook` to opt out per-command and get a plain passthrough
   terminal.
 - **TUI apps work out of the box:** vim, nvim, emacs, htop, less, tig,
-  lazygit, ranger, etc. open in a full-screen modal automatically, even
-  if they don't emit the standard alt-screen escape (modern neovim
-  often doesn't). Curated list in `backend/server.js KNOWN_TUI_COMMANDS`.
-- TUIs (vim, top, htop) — anything that uses the alt-screen buffer — open in
-  a full-screen modal that resizes the underlying PTY to fill the modal.
-- Interactive commands (gemini-cli, claude-cli, `cat`, `read`, Python REPL) run
-  inline in their cell. The chat input enters "passthrough mode" and forwards
-  every keystroke to the running command's PTY (Enter as `\r`, arrow keys,
-  Ctrl+C/D, etc.). When the command exits, normal mode resumes.
+  lazygit, ranger, etc. open in a full-screen modal automatically.
+  Detection is content-based (mouse mode + cursor positioning patterns)
+  rather than a hardcoded list, so any TUI app you run is handled
+  correctly without configuration. Modern neovim — which doesn't emit
+  the standard alt-screen escape in many configurations — is supported
+  via the same mechanism.
+- Interactive commands (gemini-cli, claude-cli, `cat`, `read`, Python REPL)
+  run inline in their cell. The chat input enters "passthrough mode" and
+  forwards every keystroke to the running command's PTY (Enter as `\r`,
+  arrow keys, Ctrl+C/D, etc.). When the command exits, normal mode resumes.
 - Sessions survive page reloads AND backend restarts — finished cells are
   persisted to SQLite (`termbook.db`); on restart the history reloads and
   a fresh PTY is spawned lazily on next interaction.
@@ -55,23 +56,22 @@ Self-hosted, localhost-only. Open-source.
   Preference persists across reloads.
 - Desktop notifications when a long-running command finishes in a
   background tab.
-- Scroll behavior:
-  - After submit, the new cell sits at the top of the viewport.
-  - On session switch, by default the latest cell is at the top.
-  - If you had scrolled a session before switching away, your scroll
-    position is restored on return.
+- WebGL renderer for pixel-perfect cursor alignment (falls back to DOM
+  renderer where WebGL is unavailable).
 
 ## What it isn't
 
-- Not a replacement for Warp/iTerm/your daily terminal — no AI, no themes,
-  no settings UI.
-- Not multi-user — anyone who can reach `localhost:4001` gets a shell. There
-  is no authentication. Do not expose it beyond localhost.
-- Not a Jupyter kernel — it's just bash in a PTY.
+- Not a replacement for Warp/iTerm/your daily terminal — no AI
+  integration, no themes, no settings UI.
+- Not multi-user — anyone who can reach `localhost:4001` gets a shell.
+  There is no authentication. **Do not expose it beyond localhost.**
+  See [SECURITY.md](SECURITY.md).
+- Not a Jupyter kernel — it's just bash/zsh in a PTY.
 
 ## Quickstart
 
-Requirements: Node 22+ (works through 26), macOS or Linux.
+Requirements: Node 22+ (works through 26), macOS or Linux. Windows
+support is untested — node-pty has known Windows issues.
 
 ```bash
 # install
@@ -89,11 +89,10 @@ cd frontend && npm run dev             # :4000
 open http://localhost:4000
 ```
 
-`mprocs.yaml` is also provided if you prefer `mprocs`.
+`mprocs.yaml` is also provided if you prefer
+[mprocs](https://github.com/pvolok/mprocs).
 
 ## Testing
-
-There are two test tiers:
 
 ```bash
 cd frontend
@@ -108,8 +107,7 @@ npm run test:e2e:update     # regenerate golden screenshots
 npm run test:e2e:headed     # watch the browser drive itself
 ```
 
-Servers must be running first (`bash scripts/restart_servers.sh`). The
-`test:visual:ci` variant starts them itself but is slower.
+Servers must be running first (`bash scripts/restart_servers.sh`).
 
 See [`docs/testing.md`](docs/testing.md) for when to add what kind of test
 and how. See [`frontend/tests/e2e/README.md`](frontend/tests/e2e/README.md)
@@ -119,29 +117,39 @@ for layout and conventions.
 ## Documentation
 
 - [AGENTS.md](AGENTS.md) — operating manual for AI coding agents working on
-  this repo. **Read this first if you're an agent.**
-- [docs/architecture.md](docs/architecture.md) — how it actually works today.
+  this repo. The most thorough onboarding doc; **start here** even if
+  you're a human.
+- [docs/architecture.md](docs/architecture.md) — how it actually works
+  today (data flow, state machines, SSH Path B, TUI lifecycle).
 - [docs/decisions.md](docs/decisions.md) — every shipped fix with rationale
-  and `file:line` references.
-- [docs/development.md](docs/development.md) — dev loop, debugging recipes,
-  common pitfalls.
+  and `file:line` references. The "why" of the codebase.
+- [docs/development.md](docs/development.md) — dev loop, debugging
+  recipes, common pitfalls.
 - [docs/testing.md](docs/testing.md) — when to write which kind of test,
   helper APIs, golden-screenshot workflow.
 - [docs/known-issues.md](docs/known-issues.md) — current limitations and
   tradeoffs we accept.
 - [docs/skills/termbook-e2e/SKILL.md](docs/skills/termbook-e2e/SKILL.md) —
   loadable skill (for OpenCode/Claude/etc.) on driving Termbook E2E tests.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to contribute.
+- [SECURITY.md](SECURITY.md) — threat model and reporting policy.
+- [CHANGELOG.md](CHANGELOG.md) — release notes.
 
 ## Status
 
-- ✅ Daily-driver usable for short commands, long output, alt-screen TUIs
-  (vim/top/etc), inline interactive CLIs (gemini/cat/REPLs), multi-tab live
-  sync, and full session persistence across backend restarts.
-- ⚠️ No auth. Localhost only.
-- ⚠️ Repo has ~1800 leftover audit PNGs and ~50 abandoned `.spec.js` files
-  from earlier debugging marathons. Not yet cleaned up — see
-  [`docs/known-issues.md`](docs/known-issues.md).
+Termbook is **v1.0** — feature-complete for the personal-tool use case
+the maintainer originally built it for. Active development has paused;
+bug fixes are welcome via PR (see [CONTRIBUTING.md](CONTRIBUTING.md)),
+but new features are not on the roadmap.
+
+If you're looking for a more actively developed terminal-with-AI or
+terminal-with-blocks, consider [Warp](https://www.warp.dev/) (Mac,
+commercial), [Wave Terminal](https://www.waveterm.dev/) (cross-platform,
+open source), or your editor's built-in terminal (Cursor, Zed, etc.).
+Termbook fills a different niche: a self-hosted, browser-based,
+SSH-with-cell-semantics notebook that you can run anywhere a browser
+can reach.
 
 ## License
 
-Not licensed for distribution. Personal project.
+[MIT](LICENSE) — © 2026 Jianling Zhong.
