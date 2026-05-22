@@ -1325,10 +1325,9 @@ the user instantly sees what host their input goes to.
 `localHostname: os.hostname()` (with `.local` suffix stripped on
 macOS). Frontend uses it in the prefix slot.
 
-**Don't** include the FQDN — `<example-host>.corp.example` is
-fine but borderline long. The `.local` strip is the only
-shortening; further trimming risks ambiguity if user has multiple
-similar hosts.
+**Don't** trim the hostname further than `.local`. A user with several
+machines named e.g. `mac-1.corp.example` and `mac-2.corp.example` would
+otherwise see the same prompt prefix everywhere.
 
 See `backend/server.js:/api/config` and `frontend/src/App.jsx`
 prefix render in `chat-input-wrapper`.

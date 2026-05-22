@@ -100,15 +100,15 @@ time TUIs (vim/top), there can be visible lag on very large terminals
 
 ## Bugs we know about but haven't fixed
 
-### opencode looks tiny in modal
+### Some TUI apps render small inside our generous modal
 
-opencode's TUI centers itself in any terminal size. Our modal gives it
-1800×1200 (max) but opencode draws its UI in a fixed-size box in the
-middle, with empty padding around it.
+Apps that center themselves in a fixed-size UI box (regardless of
+terminal dimensions) will leave empty padding inside Termbook's modal.
+Our modal sizes the PTY up to 1800×1200; if the app draws into only
+80×24 of that, the rest stays empty.
 
-**Not our bug**: it's opencode's UI design choice. If you want their UI
-to fill the modal, take it up with the opencode project. We
-give them all the room.
+**Not our bug**: it's the app's UI design choice. Termbook gives it
+the full modal area to work with.
 
 ### Background jobs leak output into the next cell
 
