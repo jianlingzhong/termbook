@@ -1,0 +1,57 @@
+name: OSSF Scorecard
+
+# Open Source Security Foundation Scorecard — grades the repo on
+# supply-chain security best practices (signed commits, branch protection,
+# pinned dependencies, etc.). The badge on the README links to a public
+# evaluation page at scorecard.dev.
+#
+# Free for public repos. Results upload to GitHub's code scanning view
+# AND publish to a public API (api.securityscorecards.dev) so anyone can
+# see the score without a GitHub account.
+
+on:
+  branch_protection_rule:    # re-evaluate when branch protection changes
+  schedule:
+    - cron: '47 3 * * 1'     # Monday 03:47 UTC, offset to avoid rush hour
+  push:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Required for uploading results to code scanning view.
+      security-events: write
+      # Required for publishing results to the OSSF API.
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@v2
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Set to true to publish to the OSSF API (makes the public badge work).
+          publish_results: true
+
+      - name: Upload artifact (SARIF)
+        uses: actions/upload-artifact@v4
+        with:
+          name: SARIF results
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
