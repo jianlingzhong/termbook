@@ -5,6 +5,14 @@
   "private": true,
   "author": "Jianling Zhong",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jianlingzhong/termbook.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jianlingzhong/termbook/issues"
+  },
+  "homepage": "https://github.com/jianlingzhong/termbook",
   "scripts": {
     "test": "bash scripts/run_tests.sh"
   }

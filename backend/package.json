@@ -8,6 +8,12 @@
   },
   "author": "Jianling Zhong",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jianlingzhong/termbook.git",
+    "directory": "backend"
+  },
+  "homepage": "https://github.com/jianlingzhong/termbook",
   "type": "commonjs",
   "dependencies": {
     "@xterm/addon-serialize": "^0.14.0",

@@ -99,13 +99,22 @@ await page.route('**/api/config', async (route) => {
 });
 
 // Inject CSS via initScript to scrub paths that would otherwise leak
-// the user's actual home directory. The backend's launch dir
-// (/Users/<name>/personal/termbook) appears in:
-//   - the top .pwd-breadcrumb (until the user cd's)
+// the recorder's home directory. The backend's launch dir
+// (e.g. /Users/<name>/path/to/termbook) appears in:
+//   - the top .pwd-breadcrumb (until the user cd's elsewhere)
 //   - the per-cell .cell-header-breadcrumb on cells run from there
-// We hide the top breadcrumb outright (it's redundant with per-cell
-// info), and hide any cell breadcrumb whose text contains "personal/".
-await page.addInitScript(() => {
+// We hide the top breadcrumb outright (it's redundant with the
+// per-cell info), and hide any cell breadcrumb whose text contains
+// the current user's name or `/Users/<name>/`. Override the substring
+// list via TERMBOOK_DEMO_MASK (comma-separated) if needed.
+const userName = process.env.USER || process.env.USERNAME || '';
+const defaultMasks = [userName, `/Users/${userName}/`, `/home/${userName}/`]
+    .filter(s => s && s.length >= 3);
+const extraMasks = (process.env.TERMBOOK_DEMO_MASK || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+const MASKS = [...defaultMasks, ...extraMasks];
+
+await page.addInitScript((masks) => {
     const style = document.createElement('style');
     style.textContent = `
         .pwd-breadcrumb { visibility: hidden !important; }
@@ -113,11 +122,10 @@ await page.addInitScript(() => {
         .cell-header-breadcrumb[data-leak-mask="1"] { visibility: hidden !important; }
     `;
     (document.head || document.documentElement).appendChild(style);
-    // Continuously mask any per-cell breadcrumb that contains the leak.
     const mask = () => {
         document.querySelectorAll('.cell-header-breadcrumb').forEach(el => {
             const txt = el.textContent || '';
-            if (txt.includes('personal/') || txt.includes('<USER>')) {
+            if (masks.some(m => m && txt.includes(m))) {
                 el.setAttribute('data-leak-mask', '1');
             }
         });
@@ -126,7 +134,7 @@ await page.addInitScript(() => {
         childList: true, subtree: true, characterData: true,
     });
     setInterval(mask, 200);
-});
+}, MASKS);
 
 console.log('[screencast] navigating to fresh session…');
 await page.goto(`${BASE_URL}/?new_session=true`, { waitUntil: 'networkidle' });
@@ -173,8 +181,10 @@ await runCmd(page, 'find . -type f -not -path "./.git/*"');
 // 6. TUI demo — open vim in the modal, type, save & quit
 console.log('[screencast] step 6: vim modal');
 await startCmd(page, 'vim notes.md');
-// Wait for TUI modal to open
-await page.waitForSelector('.tui-modal', { timeout: 8000 }).catch(() => {});
+// Wait for TUI modal to open (CSS class is `.tui-modal-overlay`,
+// not `.tui-modal` — silently waiting on a missing selector then
+// falling through after timeout was the prior behavior).
+await page.waitForSelector('.tui-modal-overlay', { timeout: 8000 }).catch(() => {});
 await pause(page, 1500);
 // Enter insert mode, type, escape, save & quit
 await page.keyboard.press('i');
