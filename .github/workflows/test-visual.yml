@@ -34,6 +34,18 @@ jobs:
             backend/package-lock.json
             frontend/package-lock.json
 
+      - name: Install runtime dependencies the test suite assumes
+        # The motion/regression tests exercise real shell commands that
+        # need binaries the bare ubuntu-latest runner doesn't ship:
+        #   - vim          → tests/visual/regression.spec.mjs vim+TUI test
+        #   - python3-venv → tests/visual/regression.spec.mjs venv-chip test
+        #     (Ubuntu splits the stdlib venv module into a separate package)
+        # The local dev machines tend to have these by default, so this
+        # extra apt step is CI-only.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends vim python3-venv
+
       - name: Install backend dependencies
         working-directory: backend
         # node-pty has a native-bindings build step that needs python + a

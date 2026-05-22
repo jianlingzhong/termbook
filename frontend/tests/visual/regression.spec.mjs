@@ -212,9 +212,16 @@ test.describe('regression', () => {
     // cols, not ~120.
     test('PTY uses available horizontal space (ls fills width)', async ({ page }) => {
         await gotoFreshSession(page);
-        await runCommand(page, 'ls', 2500);
+        // Build a known dir with enough short-named files that `ls` will
+        // pack them onto one wide row. Previously the test relied on
+        // whatever was in the backend's launch dir, which made it flaky
+        // across environments — locally my repo's backend/ had enough
+        // chars to fill 140 columns, but CI's freshly-cloned backend/
+        // didn't. Now we control the input exactly.
+        await runCommand(page, 'mkdir -p /tmp/tb_width_test && cd /tmp/tb_width_test && rm -f f_* && for i in $(seq 1 30); do touch f_$(printf "%02d" $i); done && ls', 5000);
         const data = await page.evaluate(() => {
-            const cell = document.querySelector('.notebook-cell');
+            const cells = document.querySelectorAll('.notebook-cell');
+            const cell = cells[cells.length - 1];
             const output = cell?.querySelector('.cell-output');
             const snapshot = cell?.querySelector('.snapshot-output');
             const rowDivs = snapshot?.querySelectorAll('pre > div > div') || [];
@@ -226,6 +233,8 @@ test.describe('regression', () => {
         });
         // outputWidth at 1600 viewport is ~1208px. With a 9px char width
         // we should fit at least 130 columns. The bug was 120 or less.
+        // 30 files named f_NN (4 chars each) means ls will pack many per
+        // row; the first row will easily exceed 140 chars.
         expect(data.outputWidth).toBeGreaterThan(1000);
         expect(data.firstRowCharCount).toBeGreaterThan(140);
     });

@@ -33,6 +33,13 @@ jobs:
             backend/package-lock.json
             frontend/package-lock.json
 
+      - name: Install runtime dependencies the test suite assumes
+        # Same as test-visual.yml: the e2e suite exercises vim, less, and
+        # python3 venv via real shell commands. Pre-install them here.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends vim less python3-venv
+
       - name: Install backend dependencies
         working-directory: backend
         run: npm ci
