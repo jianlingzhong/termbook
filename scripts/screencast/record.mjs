@@ -1,0 +1,222 @@
+// Drives Termbook through a diverse workflow with Playwright, recording
+// video. Run with: node scripts/screencast/record.mjs
+//
+// Prereqs:
+//   - Termbook backend + frontend running on http://localhost:4000
+//     (run `bash scripts/restart_servers.sh` first)
+//   - The demo directory /tmp/termbook-demo is created with safe-to-show
+//     content (see prep step at bottom).
+//
+// Output: scripts/screencast/output/video.webm
+// Then run scripts/screencast/to-gif.sh to convert to optimized gif.
+
+// Import from frontend/node_modules since playwright is installed there.
+import pkg from '../../frontend/node_modules/playwright/index.js';
+const { chromium } = pkg;
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const OUT_DIR = path.join(__dirname, 'output');
+const BASE_URL = process.env.TERMBOOK_BASE_URL || 'http://localhost:4000';
+const VIEWPORT = { width: 1280, height: 800 }; // narrower → smaller gif
+
+fs.rmSync(OUT_DIR, { recursive: true, force: true });
+fs.mkdirSync(OUT_DIR, { recursive: true });
+
+// Helpers ───────────────────────────────────────────────────────────────────
+const INPUT = '.chat-input-wrapper textarea';
+
+async function waitReady(page, { timeoutMs = 15000, waitForCommandReady = false } = {}) {
+    const inp = page.locator(INPUT).first();
+    await inp.waitFor({ state: 'visible', timeout: timeoutMs });
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const s = await page.evaluate(() => ({
+            disabled: document.querySelector('.chat-input-wrapper textarea')?.disabled,
+            passthrough: !!document.querySelector('.chat-input-wrapper.is-passthrough'),
+            tui: !!document.querySelector('.chat-input-wrapper.is-tui'),
+        })).catch(() => ({ disabled: true }));
+        if (s.disabled) { await page.waitForTimeout(100); continue; }
+        if (waitForCommandReady && (s.passthrough || s.tui)) { await page.waitForTimeout(100); continue; }
+        return inp;
+    }
+    throw new Error('input never ready');
+}
+
+async function typeSlowly(page, cmd, perCharMs = 35) {
+    const inp = await waitReady(page, { waitForCommandReady: true });
+    await inp.click();
+    for (const ch of cmd) {
+        await page.keyboard.type(ch);
+        await page.waitForTimeout(perCharMs);
+    }
+}
+
+async function runCmd(page, cmd, { afterMs = 700, timeoutMs = 30000 } = {}) {
+    await typeSlowly(page, cmd);
+    await page.waitForTimeout(300);
+    await page.keyboard.press('Enter');
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        await page.waitForTimeout(150);
+        const running = await page.locator('.notebook-cell.active-cell').count();
+        if (running === 0) { await page.waitForTimeout(afterMs); return; }
+    }
+    throw new Error(`timed out: ${cmd}`);
+}
+
+// Run a command but don't wait for finish (interactive / passthrough).
+async function startCmd(page, cmd) {
+    await typeSlowly(page, cmd);
+    await page.waitForTimeout(300);
+    await page.keyboard.press('Enter');
+}
+
+async function pause(page, ms) { await page.waitForTimeout(ms); }
+
+// Main ──────────────────────────────────────────────────────────────────────
+const browser = await chromium.launch({ headless: true });
+const ctx = await browser.newContext({
+    viewport: VIEWPORT,
+    recordVideo: { dir: OUT_DIR, size: VIEWPORT },
+});
+const page = await ctx.newPage();
+
+// Override /api/config to replace the user's actual hostname with a
+// generic one. The hostname is shown in the chat input prompt
+// (`<host> ❯`) and would otherwise leak into the screencast.
+await page.route('**/api/config', async (route) => {
+    const resp = await route.fetch();
+    const body = await resp.json();
+    body.localHostname = 'localhost';
+    await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+    });
+});
+
+// Inject CSS via initScript to scrub paths that would otherwise leak
+// the user's actual home directory. The backend's launch dir
+// (/Users/<name>/personal/termbook) appears in:
+//   - the top .pwd-breadcrumb (until the user cd's)
+//   - the per-cell .cell-header-breadcrumb on cells run from there
+// We hide the top breadcrumb outright (it's redundant with per-cell
+// info), and hide any cell breadcrumb whose text contains "personal/".
+await page.addInitScript(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+        .pwd-breadcrumb { visibility: hidden !important; }
+        /* Hide right-side path chips that still hold the launch dir. */
+        .cell-header-breadcrumb[data-leak-mask="1"] { visibility: hidden !important; }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+    // Continuously mask any per-cell breadcrumb that contains the leak.
+    const mask = () => {
+        document.querySelectorAll('.cell-header-breadcrumb').forEach(el => {
+            const txt = el.textContent || '';
+            if (txt.includes('personal/') || txt.includes('jianlingzhong')) {
+                el.setAttribute('data-leak-mask', '1');
+            }
+        });
+    };
+    new MutationObserver(mask).observe(document.documentElement, {
+        childList: true, subtree: true, characterData: true,
+    });
+    setInterval(mask, 200);
+});
+
+console.log('[screencast] navigating to fresh session…');
+await page.goto(`${BASE_URL}/?new_session=true`, { waitUntil: 'networkidle' });
+await waitReady(page);
+
+// Belt-and-suspenders: re-apply the leak-mask styles after the React
+// app has rendered. addInitScript runs at document_start, which works,
+// but if for any reason the <style> got stripped by React we re-inject.
+await page.addStyleTag({
+    content: `
+        .pwd-breadcrumb { visibility: hidden !important; }
+        .cell-header-breadcrumb[data-leak-mask="1"] { visibility: hidden !important; }
+    `,
+});
+
+await pause(page, 800);
+
+// Everything happens in /tmp/termbook-demo — a throwaway git repo with
+// safe contents (see scripts/screencast/prep.sh). Nothing from the
+// user's actual filesystem is shown.
+
+// 1. Orient: cd in, show pwd
+console.log('[screencast] step 1: cd + pwd');
+await runCmd(page, 'cd /tmp/termbook-demo');
+await runCmd(page, 'pwd');
+
+// 2. Non-TUI streaming output: ls. Use bare `ls` (not `ls -la`) so
+// file-owner columns don't leak the actual username.
+console.log('[screencast] step 2: ls');
+await runCmd(page, 'ls');
+
+// 3. Text output: cat README
+console.log('[screencast] step 3: cat README.md');
+await runCmd(page, 'cat README.md');
+
+// 4. Git — shows the env chip and demo commits
+console.log('[screencast] step 4: git log');
+await runCmd(page, 'git --no-pager log --oneline');
+
+// 5. Streaming output: find
+console.log('[screencast] step 5: find files');
+await runCmd(page, 'find . -type f -not -path "./.git/*"');
+
+// 6. TUI demo — open vim in the modal, type, save & quit
+console.log('[screencast] step 6: vim modal');
+await startCmd(page, 'vim notes.md');
+// Wait for TUI modal to open
+await page.waitForSelector('.tui-modal', { timeout: 8000 }).catch(() => {});
+await pause(page, 1500);
+// Enter insert mode, type, escape, save & quit
+await page.keyboard.press('i');
+await pause(page, 400);
+await page.keyboard.type('Termbook makes the terminal feel like a notebook.', { delay: 50 });
+await pause(page, 800);
+await page.keyboard.press('Escape');
+await pause(page, 400);
+await page.keyboard.type(':wq');
+await pause(page, 400);
+await page.keyboard.press('Enter');
+await pause(page, 1500);
+
+// 7. Verify the file was written
+console.log('[screencast] step 7: cat the new file');
+await runCmd(page, 'cat notes.md');
+
+// 8. Show a new session (multi-session). cd immediately so the path chip
+// doesn't expose the backend's launch directory.
+console.log('[screencast] step 8: new session');
+await page.locator('.sidebar h2 + button').click();
+await pause(page, 1800);
+await waitReady(page);
+await runCmd(page, 'cd /tmp/termbook-demo && echo "Each session has its own shell, cwd, and history."');
+
+// 9. Final flourish — switch back to first session to show persistence
+console.log('[screencast] step 9: switch back to first session');
+const sessions = page.locator('.sidebar ul li');
+await sessions.nth(0).click();
+await pause(page, 2000);
+
+console.log('[screencast] closing…');
+await ctx.close();
+await browser.close();
+
+// Find the video file (playwright names it with a hash)
+const files = fs.readdirSync(OUT_DIR).filter(f => f.endsWith('.webm'));
+if (files.length === 0) {
+    console.error('[screencast] FAIL: no video produced');
+    process.exit(1);
+}
+const src = path.join(OUT_DIR, files[0]);
+const dst = path.join(OUT_DIR, 'video.webm');
+if (src !== dst) fs.renameSync(src, dst);
+console.log(`[screencast] DONE: ${dst}`);
