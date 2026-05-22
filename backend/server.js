@@ -1126,7 +1126,14 @@ app.get('/api/complete', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 4001;
+// Bind to loopback by default. Termbook has no authentication; anyone who
+// can reach :4001 gets a shell as the server user. Binding to 0.0.0.0
+// would expose that shell to every device on the LAN. To intentionally
+// expose Termbook beyond loopback (e.g. behind a reverse proxy with
+// auth), set TERMBOOK_BIND=0.0.0.0.
+// See SECURITY.md for the full threat model.
+const HOST = process.env.TERMBOOK_BIND || '127.0.0.1';
 if (require.main === module) {
-  server.listen(PORT, () => console.log(`[*] Backend server listening on port ${PORT}`));
+  server.listen(PORT, HOST, () => console.log(`[*] Backend server listening on ${HOST}:${PORT}`));
 }
 module.exports = { app, server };
