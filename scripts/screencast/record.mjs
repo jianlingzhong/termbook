@@ -108,32 +108,53 @@ await page.route('**/api/config', async (route) => {
 // the current user's name or `/Users/<name>/`. Override the substring
 // list via TERMBOOK_DEMO_MASK (comma-separated) if needed.
 const userName = process.env.USER || process.env.USERNAME || '';
-const defaultMasks = [userName, `/Users/${userName}/`, `/home/${userName}/`]
+// Mask anything that smells like the recorder's home directory. The
+// userName check catches `/Users/<name>/...` formatted chips; the bare
+// `/Users/` and `/home/` checks catch any other path under those
+// roots that the recorder may have wandered through before the demo
+// `cd`. Aggressive but harmless: legitimate cells in the demo run
+// under `/tmp/termbook-demo`, which contains none of these strings.
+const defaultMasks = [userName, `/Users/${userName}/`, `/home/${userName}/`, '/Users/', '/home/']
     .filter(s => s && s.length >= 3);
 const extraMasks = (process.env.TERMBOOK_DEMO_MASK || '')
     .split(',').map(s => s.trim()).filter(Boolean);
 const MASKS = [...defaultMasks, ...extraMasks];
 
+// IMPORTANT: addInitScript runs at document_start, BEFORE the DOM is
+// constructed. document.head and document.documentElement are both
+// null at that moment, so any synchronous DOM manipulation throws
+// (silently — Playwright's init scripts don't surface errors), and
+// any later setInterval scheduled AFTER the throw never runs.
+//
+// Wrap the setup in a DOMContentLoaded handler so the style+observer
+// are installed after the document tree exists.
 await page.addInitScript((masks) => {
-    const style = document.createElement('style');
-    style.textContent = `
-        .pwd-breadcrumb { visibility: hidden !important; }
-        /* Hide right-side path chips that still hold the launch dir. */
-        .cell-header-breadcrumb[data-leak-mask="1"] { visibility: hidden !important; }
-    `;
-    (document.head || document.documentElement).appendChild(style);
-    const mask = () => {
-        document.querySelectorAll('.cell-header-breadcrumb').forEach(el => {
-            const txt = el.textContent || '';
-            if (masks.some(m => m && txt.includes(m))) {
-                el.setAttribute('data-leak-mask', '1');
-            }
+    const install = () => {
+        const style = document.createElement('style');
+        style.textContent = `
+            .pwd-breadcrumb { visibility: hidden !important; }
+            /* Hide right-side path chips that still hold the launch dir. */
+            .cell-header-breadcrumb[data-leak-mask="1"] { visibility: hidden !important; }
+        `;
+        document.head.appendChild(style);
+        const mask = () => {
+            document.querySelectorAll('.cell-header-breadcrumb').forEach(el => {
+                const txt = el.textContent || '';
+                if (masks.some(m => m && txt.includes(m))) {
+                    el.setAttribute('data-leak-mask', '1');
+                }
+            });
+        };
+        new MutationObserver(mask).observe(document.documentElement, {
+            childList: true, subtree: true, characterData: true,
         });
+        setInterval(mask, 200);
     };
-    new MutationObserver(mask).observe(document.documentElement, {
-        childList: true, subtree: true, characterData: true,
-    });
-    setInterval(mask, 200);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', install, { once: true });
+    } else {
+        install();
+    }
 }, MASKS);
 
 console.log('[screencast] navigating to fresh session…');
@@ -202,19 +223,39 @@ await pause(page, 1500);
 console.log('[screencast] step 7: cat the new file');
 await runCmd(page, 'cat notes.md');
 
-// 8. Show a new session (multi-session). cd immediately so the path chip
-// doesn't expose the backend's launch directory.
-console.log('[screencast] step 8: new session');
+// 8. Scroll back to show the cell history. Each new submit auto-scrolls
+// the latest cell to the top of the viewport (the "Warp / Jupyter
+// feel"), which on a 45-second walkthrough means by the time we hit
+// step 7 only the latest 1-2 cells are visible. The whole point of
+// the cell model is invisible unless we wheel up and let viewers see
+// the stacked cells. Slow wheel up so it reads as deliberate
+// navigation; pause at the top so the structure is legible.
+console.log('[screencast] step 8: scroll back to show cell history');
+const scroller = page.locator('.notebook-content');
+await scroller.hover();
+// Take multiple smaller wheels so the scroll animates smoothly instead
+// of jumping. ~7 wheel events of 220px each at 240ms intervals
+// scrolls past ~1500px (enough to bring early cells into view) over
+// ~1.7s — a comfortable read tempo.
+for (let i = 0; i < 7; i++) {
+    await page.mouse.wheel(0, -220);
+    await pause(page, 240);
+}
+await pause(page, 1800);  // pause at top so the cell stack is legible
+
+// 9. Show a new session (multi-session). cd immediately so the path
+// chip doesn't expose the backend's launch directory.
+console.log('[screencast] step 9: new session');
 await page.locator('.sidebar h2 + button').click();
 await pause(page, 1800);
 await waitReady(page);
 await runCmd(page, 'cd /tmp/termbook-demo && echo "Each session has its own shell, cwd, and history."');
 
-// 9. Final flourish — switch back to first session to show persistence
-console.log('[screencast] step 9: switch back to first session');
+// 10. Final flourish — switch back to first session to show persistence
+console.log('[screencast] step 10: switch back to first session');
 const sessions = page.locator('.sidebar ul li');
 await sessions.nth(0).click();
-await pause(page, 2000);
+await pause(page, 2500);
 
 console.log('[screencast] closing…');
 await ctx.close();
