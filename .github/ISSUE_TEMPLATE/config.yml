@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/jianlingzhong/termbook/security/advisories/new
+    about: Use GitHub's private vulnerability reporting (don't open a public issue for security).
+  - name: General question / discussion
+    url: https://github.com/jianlingzhong/termbook/discussions
+    about: For "how do I…" or "is this a bug or expected?" questions.

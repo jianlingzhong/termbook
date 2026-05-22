@@ -1,0 +1,65 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please check [`docs/known-issues.md`](https://github.com/jianlingzhong/termbook/blob/main/docs/known-issues.md) — many "bugs" are documented limitations.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, what actually happened
+      placeholder: |
+        I ran `ssh user@host`, then `git log`, and …
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, shell, browser
+      value: |
+        - OS: macOS 14.x / Ubuntu 24.04 / WSL2
+        - Node: `node --version`
+        - Shell: bash 5.2 / zsh 5.9
+        - Browser: Chrome 130 / Safari 18 / Firefox 132
+    validations:
+      required: true
+
+  - type: textarea
+    id: frontend_debug
+    attributes:
+      label: Frontend debug log (for UI bugs)
+      description: |
+        For UI bugs (cell stuck, modal won't open, input disabled, etc.):
+        1. Open DevTools console in the broken browser tab
+        2. Run `__tbDebug()`
+        3. Paste the output here (it's also auto-copied to your clipboard)
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: backend_debug
+    attributes:
+      label: Backend debug log (for command/output bugs)
+      description: |
+        For backend bugs (commands don't finish, output is wrong, etc.):
+        1. Truncate the log: `: > ssr_debug.log`
+        2. Reproduce the bug
+        3. Paste `tail -100 ssr_debug.log`
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, video, custom shell config, anything that might help
+    validations:
+      required: false
