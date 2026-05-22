@@ -61,12 +61,18 @@ test.describe('regression', () => {
         // promotion doesn't fire, so vim rendered inline.
         await inp.fill('vim /tmp/_regress_vim.txt');
         await inp.press('Enter');
-        await page.waitForTimeout(3000);
 
-        const modalText = await page.evaluate(() => {
+        // Wait for the modal to appear (TUI promotion fires on
+        // \x1b[?1049h from vim) AND for xterm to render at least one
+        // tilde row. The fixed 3s wait we used before was tight enough
+        // on slow CI hardware that xterm's DOM renderer hadn't painted
+        // the tildes yet when innerText was queried.
+        await page.waitForSelector('.tui-modal-overlay', { timeout: 8000 });
+        const modalText = await page.waitForFunction(() => {
             const m = document.querySelector('.tui-terminal-container');
-            return m ? m.innerText : '';
-        });
+            const t = m ? m.innerText : '';
+            return t.includes('~') ? t : null;
+        }, null, { timeout: 8000 }).then(h => h.jsonValue());
         expect(modalText, 'vim tildes should be visible in TUI modal').toContain('~');
 
         await page.keyboard.press('Escape');
@@ -225,6 +231,14 @@ test.describe('regression', () => {
         // multiple columns. Previously the test relied on the backend's
         // launch dir, which made it flaky across environments.
         await runCommand(page, 'mkdir -p /tmp/tb_width_test && cd /tmp/tb_width_test && rm -f f_* && for i in $(seq 1 30); do touch f_$(printf "%02d" $i); done && ls', 5000);
+        // Wait for the snapshot HTML to render — runCommand returns when the
+        // cell closes, but snapshot serialization (xterm → DOM) lands a few
+        // hundred ms later. CI exposed this race; locally it never bit.
+        await page.waitForFunction(() => {
+            const cells = document.querySelectorAll('.notebook-cell');
+            const cell = cells[cells.length - 1];
+            return cell && cell.querySelector('.snapshot-output pre');
+        }, null, { timeout: 8000 });
         const data = await page.evaluate(() => {
             const cells = document.querySelectorAll('.notebook-cell');
             const cell = cells[cells.length - 1];
