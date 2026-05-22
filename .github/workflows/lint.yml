@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only by default. No step in this workflow writes back to the repo,
+# uploads packages, or needs to touch issues / PRs. Restrict the default
+# GITHUB_TOKEN accordingly.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
