@@ -1,11 +1,21 @@
-# Termbook
+# Termbook — a notebook-style web terminal for bash, zsh, and SSH
 
-A notebook-style web terminal. Each shell command becomes a "cell" with its
-own status, output, timestamp, and history — like Jupyter, but for bash/zsh.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-101%20passing-brightgreen.svg)](frontend/tests/)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520-blue.svg)](backend/package.json)
+[![Status: feature-complete](https://img.shields.io/badge/status-feature--complete-success.svg)](#status)
 
-Self-hosted, localhost-only. MIT licensed.
+Termbook is a self-hosted, browser-based terminal that turns every shell
+command into a notebook cell — like Jupyter, but for bash, zsh, and remote
+SSH sessions. Each cell shows the command, output, exit code, duration,
+working directory, and git/venv/conda context. TUI apps (vim, nvim, htop,
+less, lazygit, tig) open in a clean full-screen modal. SSH sessions get
+per-remote-command cells with the real remote pwd, git branch, and exit
+code. Built with xterm.js, React, node-pty, and SQLite. Localhost-only,
+single-user, MIT licensed.
 
-![Termbook demo](docs/termbook-demo.gif)
+![Termbook screencast: running shell commands as notebook cells, opening vim in a modal, switching between sessions, on a dark cyan-accented UI](docs/termbook-demo.gif)
 
 ## What it is
 
