@@ -25,9 +25,15 @@ function parseSshCommand(cmd) {
   const result = { isSsh: false, isSingleShot: false, optOut: false, host: null, cleanedCommand: cmd };
   if (typeof cmd !== 'string') return result;
   const trimmed = cmd.trim();
-  // Must start with `ssh` followed by space or EOL — exclude `sshfs`, `scp`,
-  // `ssh-keygen`, etc.
-  const sshHead = /^ssh(\s|$)/;
+  // Must start with `ssh` (or an absolute path to a binary named `ssh`,
+  // like `/usr/bin/ssh` or `/opt/openssh/bin/ssh`) followed by space or
+  // EOL — exclude `sshfs`, `scp`, `ssh-keygen`, etc.
+  //
+  // Accepting absolute paths matters when the user's PATH is shadowed
+  // (e.g. corp-managed `/usr/local/bin/ssh` wrappers) and they invoke
+  // `/usr/bin/ssh` directly to bypass it. Without this, Termbook's
+  // SSH integration silently disengages on those invocations.
+  const sshHead = /^(?:\/\S+\/)?ssh(\s|$)/;
   if (!sshHead.test(trimmed)) return result;
   result.isSsh = true;
 
