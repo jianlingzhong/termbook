@@ -354,10 +354,17 @@ test.describe('scroll behavior — content shape × scroll state × switch patte
         await runCommand(page, 'echo top_of_viewport');
         await page.waitForTimeout(500);
         // Capture just the top 250px of the notebook area (where the
-        // latest cell should be sitting). Mask volatile chrome.
+        // latest cell should be sitting). Mask all per-contributor
+        // volatile chrome — see comment in 06_visual_snapshots.spec.mjs.
         await expect(page).toHaveScreenshot('scroll_short_cell_at_top.png', {
             clip: { x: 280, y: 0, width: 1320, height: 250 },
-            mask: [page.locator('.sidebar ul li'), page.locator('.cell-time'), page.locator('.cell-duration')],
+            mask: [
+                page.locator('.sidebar ul li'),
+                page.locator('.cell-time'),
+                page.locator('.cell-duration'),
+                page.locator('.pwd-breadcrumb'),
+                page.locator('.cell-header-breadcrumb'),
+            ],
         });
         await shot(page, testInfo, 'short_cell_at_top_for_log');
     });
@@ -369,7 +376,13 @@ test.describe('scroll behavior — content shape × scroll state × switch patte
         await page.waitForTimeout(500);
         await expect(page).toHaveScreenshot('scroll_long_cell_at_top.png', {
             clip: { x: 280, y: 0, width: 1320, height: 400 },
-            mask: [page.locator('.sidebar ul li'), page.locator('.cell-time'), page.locator('.cell-duration')],
+            mask: [
+                page.locator('.sidebar ul li'),
+                page.locator('.cell-time'),
+                page.locator('.cell-duration'),
+                page.locator('.pwd-breadcrumb'),
+                page.locator('.cell-header-breadcrumb'),
+            ],
         });
         await shot(page, testInfo, 'long_cell_at_top_for_log');
     });
