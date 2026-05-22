@@ -2,7 +2,10 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-101%20passing-brightgreen.svg)](frontend/tests/)
+[![Lint](https://github.com/jianlingzhong/termbook/actions/workflows/lint.yml/badge.svg)](https://github.com/jianlingzhong/termbook/actions/workflows/lint.yml)
+[![Visual tests](https://github.com/jianlingzhong/termbook/actions/workflows/test-visual.yml/badge.svg)](https://github.com/jianlingzhong/termbook/actions/workflows/test-visual.yml)
+[![CodeQL](https://github.com/jianlingzhong/termbook/actions/workflows/codeql.yml/badge.svg)](https://github.com/jianlingzhong/termbook/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/jianlingzhong/termbook/badge)](https://scorecard.dev/viewer/?uri=github.com/jianlingzhong/termbook)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-blue.svg)](backend/package.json)
 
 Termbook is a self-hosted, browser-based terminal that turns every shell

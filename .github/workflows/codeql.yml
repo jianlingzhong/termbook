@@ -1,0 +1,56 @@
+name: CodeQL
+
+# Free static-analysis security scanning for public repositories.
+# Runs on push to main, on every PR, and weekly to catch new advisories
+# affecting code that hasn't changed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Monday 06:37 UTC — offset minute so we're not in the top-of-hour rush.
+    - cron: '37 6 * * 1'
+
+permissions:
+  contents: read
+  security-events: write    # required by github/codeql-action/analyze
+  actions: read             # required by codeql-action for workflow metadata
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # JavaScript/TypeScript covers our frontend (JSX) + backend (CJS).
+        # CodeQL auto-detects both flavors under the single 'javascript-typescript' language.
+        language: ['javascript-typescript']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # Use the default + security-extended query suite. Slightly more
+          # findings than the default; worth the noise for a small repo.
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'
