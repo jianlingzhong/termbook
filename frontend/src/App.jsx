@@ -12,9 +12,10 @@ import './index.css';
 
 function shortenPath(p) {
   if (!p) return '~';
-  const home = '/Users/';
   let s = p;
-  const hm = s.match(/^\/Users\/[^/]+/);
+  // Collapse `/Users/<name>` (macOS) or `/home/<name>` (Linux) → `~`
+  // so the breadcrumb stays compact and doesn't leak usernames.
+  const hm = s.match(/^\/(?:Users|home)\/[^/]+/);
   if (hm) s = '~' + s.substring(hm[0].length);
   const segs = s.split('/');
   if (segs.length <= 4) return s;
@@ -409,7 +410,7 @@ function App() {
     setSessionSshActive(prev => { const n = { ...prev }; delete n[sessionId]; return n; });
     setSessionSshHosts(prev => { const n = { ...prev }; delete n[sessionId]; return n; });
     if (activeSessionId === sessionId) {
-        setActiveSessionId(prevId => {
+        setActiveSessionId(_prevId => {
             const remaining = sessions.filter(s => s.id !== sessionId);
             return remaining.length > 0 ? remaining[0].id : null;
         });

@@ -1,7 +1,8 @@
 # Visual & motion tests
 
-Curated end-to-end test suite for Termbook. Lives in `tests/visual/` to keep
-it separate from the legacy `tests/*.spec.{js,ts}` ad-hoc audit scripts.
+Curated end-to-end test suite for Termbook. Targets motion regressions and
+structural invariants — anything that can be checked via a single page state
+or via short-window animation sampling.
 
 Two kinds of tests:
 
@@ -73,14 +74,21 @@ test('seq 1 30 does not flash beyond final height', async ({ page }) => {
 
 ## Why a separate Playwright config?
 
-`frontend/playwright.config.ts` targets the existing `tests/` directory
-and matches `**/*.spec.{js,ts}`, which sweeps in earlier ad-hoc
-scripts. The new suite lives under `tests/visual/` with a `.spec.mjs`
-extension so we can target it cleanly via `playwright.visual.config.js`
-without disturbing the old layout.
+The visual and e2e suites have different concerns:
+
+- **`playwright.visual.config.js`** — runs `tests/visual/*.spec.mjs`,
+  fast feedback, video only on failure, no global setup. Good for
+  `npm run test:visual` while iterating on a fix.
+- **`playwright.e2e.config.js`** — runs `tests/e2e/*.spec.mjs`, video
+  always on (the screencast IS the proof of behavior), spins up the
+  userspace sshd for the SSH suite via `globalSetup`.
+
+Keeping the configs separate lets you run the fast suite without
+paying the sshd startup or the e2e video-capture overhead.
 
 ## CI tip
 
-`TERMBOOK_CI=1` enables the `webServer` block that auto-starts both
-servers. In a real CI pipeline, prefer to start servers yourself (more
-control over logs) and run with `TERMBOOK_CI` unset.
+`TERMBOOK_CI=1` enables the `webServer` block in the visual config
+that auto-starts both servers. In a real CI pipeline, prefer to start
+servers yourself (more control over logs) and run with `TERMBOOK_CI`
+unset.

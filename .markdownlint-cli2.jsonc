@@ -1,0 +1,29 @@
+// Markdown lint config for Termbook.
+//
+// We deliberately disable a few rules that fight common patterns in
+// our docs — see comments on each.
+{
+  "config": {
+    // Line length: AGENTS.md's "Debugging recipes" table has unavoidably
+    // long lines. Wrapping a table cell breaks rendering. We accept long
+    // lines in tables and prose.
+    "MD013": false,
+
+    // Table column style: we don't enforce spaces around pipes.
+    "MD060": false,
+
+    // First-line heading: PR/issue templates don't have a top-level H1
+    // by design (GitHub adds the title separately).
+    "MD041": false,
+
+    // Lists surrounded by blanks: we use tight markdown in compact
+    // doc tables and inline lists; the rule fights our style.
+    "MD032": false,
+
+    // Fenced code blocks surrounded by blanks: same — sometimes we
+    // immediately follow prose with a tight code block for clarity.
+    "MD031": false
+  },
+  "globs": ["*.md", ".github/**/*.md", "docs/**/*.md"],
+  "ignores": ["node_modules/**", "**/node_modules/**", "frontend/test-results/**", "frontend/playwright-report*/**"]
+}

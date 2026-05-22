@@ -17,9 +17,9 @@ and [development.md](development.md) (dev loop + recipes).
 | **Visual / regression** | `frontend/tests/visual/*.spec.mjs` | `npm run test:visual` | ~3 min | Single-defect regressions; motion flashes (sampling-based). Fast unit-of-fix tests. |
 | **End-to-end (E2E)** | `frontend/tests/e2e/*.spec.mjs` | `npm run test:e2e` | ~6 min | Full user workflows; screenshots + screencasts; pixel goldens. Includes 16 SSH tests that spin up a userspace sshd on `127.0.0.1:2222` via `tests/e2e/ssh-global-setup.mjs` (reused across runs). |
 
-`npm run test:all` runs both. Always pass `100/100` (≈) before
+`npm run test:all` runs both. Always pass `101/101` (≈) before
 claiming done — one e2e test skips when WebGL isn't available, so
-headless without GPU shows `99 passed + 1 skipped`; real users always
+headless without GPU shows `100 passed + 1 skipped`; real users always
 have WebGL.
 
 ### Visual / regression tier
@@ -171,7 +171,7 @@ test('git workflow: status, log, branch chip', async ({ page }, testInfo) => {
 ```
 
 Each test produces, under `frontend/test-results/<test-name>/`:
-- `video.webm` — full screencast. The video IS the audit artifact.
+- `video.webm` — full screencast. The video IS the proof of behavior.
 - `<NN>_<label>.png` — labeled screenshots from `shot()` calls
 - `trace.zip` — Playwright trace; open with `npx playwright show-trace`
 

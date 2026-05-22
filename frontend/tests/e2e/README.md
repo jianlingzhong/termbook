@@ -16,7 +16,10 @@ tests/e2e/
 ├── 04_persistence.spec.mjs          # backend restart → cells survive
 ├── 05_motion_stability.spec.mjs     # sampling-based flash detection
 ├── 06_visual_snapshots.spec.mjs     # pixel-diff against golden PNGs
-└── 07_scroll_behavior.spec.mjs      # 19-test scroll matrix (submit/switch/restore/bounce/vim/passthrough)
+├── 07_scroll_behavior.spec.mjs      # 19-test scroll matrix (submit/switch/restore/bounce/vim/passthrough)
+├── 08_ssh_session.spec.mjs          # the SSH integration: remote pwd/git/exit, Tab, Ctrl+D, chips, vim over SSH
+├── ssh-global-setup.mjs             # spawns userspace sshd on 127.0.0.1:2222
+└── ssh-global-teardown.mjs
 ```
 
 For the full helper API reference and conventions, see
@@ -42,7 +45,7 @@ npm run test:e2e:update          # regenerate golden screenshots
 Every test run leaves behind, under `test-results/<test-name>/`:
 
 - `video.webm` — full screencast of the test (the screencast IS the
-  audit artifact for motion/timing bugs)
+  primary evidence for motion/timing bugs)
 - `<00..NN>_<label>.png` — labeled screenshots at every meaningful step
   (welcome, after_git_status, palette_open, etc.)
 - `trace.zip` — full Playwright trace; open with
@@ -85,8 +88,9 @@ Add one whenever you:
 
 - **Don't write spec files outside `tests/e2e/` for ad-hoc debugging.**
   If a problem is worth investigating, write the spec here so future
-  agents inherit your work. The repo's `git log` shows what happens
-  when you leave 50 abandoned `*_audit.spec.js` files lying around.
+  agents and contributors inherit your work. One-off `_drive_*.mjs`
+  scripts in the repo root or in `frontend/` get forgotten and
+  reinvented; specs in `tests/e2e/` get run on every CI.
 - **Don't rely on fixed `waitForTimeout(N)` for "settled" state.** Use
   `waitForIdle`, `waitForPassthrough`, or `waitInputReady`. Race
   conditions hide in arbitrary sleeps.

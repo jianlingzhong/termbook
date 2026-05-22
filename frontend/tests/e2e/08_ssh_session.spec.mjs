@@ -1,4 +1,4 @@
-// E2E: SSH session — the SSH integration (default).
+// E2E: SSH integration (the default ssh-aware mode).
 //
 // Termbook automatically injects a salted shell-integration into the remote
 // shell when the user runs an interactive `ssh user@host`. From that point
@@ -24,20 +24,26 @@
 //   - known_hosts seeded at /tmp/termbook-e2e-sshd/known_hosts
 
 import { test, expect } from '@playwright/test';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
-    VIEWPORT, gotoFreshSession, waitInputReady, runCommand, shot, lastCellInfo, waitForPassthrough, waitForIdle,
+    VIEWPORT, gotoFreshSession, waitInputReady, runCommand, shot, waitForPassthrough, waitForIdle,
 } from './helpers.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 test.use({ viewport: VIEWPORT });
 
 const SSH_HOST = '127.0.0.1';
 const SSH_PORT = 2222;
 // Some dev environments shadow `ssh` with a wrapper that requires
-// hardware key taps (e.g. a `hardware-token-ssh-wrapper` in /usr/local/bin/ssh).
-// In those environments the 2nd, 3rd, ... ssh in the same test run hang
-// waiting for a tap that never comes. The test SUT works fine with any
-// ssh client, so just invoke the real Apple ssh directly to keep CI
-// deterministic. Override with TERMBOOK_E2E_SSH_BIN if needed.
+// hardware key taps on each connection (some hardware-token SSH
+// wrappers in /usr/local/bin/ssh). In those environments the 2nd,
+// 3rd, ... ssh in the same test run hang waiting for a tap that never
+// comes. The test SUT works fine with any ssh client, so invoke the
+// real system ssh directly to keep CI deterministic. Override with
+// TERMBOOK_E2E_SSH_BIN if needed.
 const SSH_BIN = process.env.TERMBOOK_E2E_SSH_BIN || '/usr/bin/ssh';
 
 // Helper: submit a command and wait for the ssh session to become active.
@@ -67,7 +73,7 @@ async function loginSsh(page, extraArgs = '') {
         if (outer && !outer.isRunning && outer.usedSshSession) return;
         await page.waitForTimeout(200);
     }
-    throw new Error('SSH never reached the active SSH integration state within 10s');
+    throw new Error('SSH integration never reached the active state within 18s');
 }
 
 // Submit a command WHILE the SSH session is active (will become a remote cell).
@@ -107,7 +113,7 @@ async function inspectCells(page) {
     });
 }
 
-test.describe('SSH session — on by default', () => {
+test.describe('SSH integration (default)', () => {
 
     test('A: happy path: ssh, run remote commands, each is its own cell with SSH chip', async ({ page }, testInfo) => {
         await gotoFreshSession(page);
@@ -154,7 +160,10 @@ test.describe('SSH session — on by default', () => {
         await gotoFreshSession(page);
         await loginSsh(page);
         // termbook itself is a git repo accessible to the remote (loopback).
-        await runRemote(page, 'cd /Users/' + process.env.USER + '/personal/termbook');
+        // Resolve the repo path at test time so this works on any
+        // contributor's machine, not just the original author's.
+        const repoRoot = path.resolve(__dirname, '..', '..', '..');
+        await runRemote(page, `cd ${repoRoot}`);
         await runRemote(page, 'git rev-parse --abbrev-ref HEAD');
         await shot(page, testInfo, '01_after_git');
 
@@ -240,7 +249,7 @@ test.describe('SSH session — on by default', () => {
         expect(post.output).toContain('POST_VIM_OK');
     });
 
-    test('G: --no-termbook opts out: no SSH chip, falls back to the pre-integration SSH mode behavior', async ({ page }, testInfo) => {
+    test('G: --no-termbook opts out: no SSH chip, whole session is one passthrough cell', async ({ page }, testInfo) => {
         await gotoFreshSession(page);
         const inp = await waitInputReady(page);
         await inp.fill(`${SSH_BIN} --no-termbook -p ${SSH_PORT} ${SSH_HOST}`);
@@ -274,7 +283,7 @@ test.describe('SSH session — on by default', () => {
         expect(last.usedSshSession).toBe(false);
     });
 
-    test('I: nested ssh: outer the SSH integration holds, inner exits cleanly back to outer', async ({ page }, testInfo) => {
+    test('I: nested ssh: outer integration holds, inner exits cleanly back to outer', async ({ page }, testInfo) => {
         await gotoFreshSession(page);
         await loginSsh(page);
         // Inner ssh — back to ourselves (single-shot to test, since nested
@@ -428,8 +437,6 @@ test.describe('SSH session — on by default', () => {
         // And critically: a 2ND SSH attempt must work. Previously the
         // unsealed first-SSH state caused the 2nd ssh to spin forever.
         await loginSsh(page); // throws on timeout — that's the regression we'd catch
-        const c2 = await inspectCells(page);
-        const lastSsh = c2.filter(x => x.sshChip).slice(-1)[0];
         // After 2nd loginSsh, at least the new ssh cell is closed-as-active
         // and we're with the SSH integration active again. The `.pwd-prompt-prefix-ssh` element
         // is driven by the `ssh_state` WS message, which races against the

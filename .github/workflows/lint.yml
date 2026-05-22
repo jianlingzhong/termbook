@@ -1,0 +1,39 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  eslint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run eslint
+        working-directory: frontend
+        # The lint command targets the configured globs in eslint.config.js
+        # (src/ + tests/ + the config files themselves). Generated dirs
+        # (test-results/, playwright-report-*/, dist/, node_modules/) are
+        # explicitly ignored — without those exclusions the lint output
+        # is drowned by minified vendor bundles in the HTML reports.
+        run: npm run lint

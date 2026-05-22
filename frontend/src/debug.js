@@ -64,12 +64,10 @@ if (typeof window !== 'undefined') {
             return `[${ts}] [${e.cat}] ${e.msg}${d}`;
         });
         const text = lines.join('\n');
-        // eslint-disable-next-line no-console
         console.log('=== Termbook debug dump (last ' + events.length + ' events) ===\n' + text);
         // Also copy to clipboard if available so the user can paste back.
         try {
             navigator.clipboard.writeText(text);
-            // eslint-disable-next-line no-console
             console.log('(copied to clipboard)');
         } catch {}
         return text;

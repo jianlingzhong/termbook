@@ -164,8 +164,10 @@ Almost always one of:
 - Your test ran at 1600x1000 but the user is on a 2560 ultrawide.
 
 When you make a change that depends on viewport, **test at multiple
-viewports**. See the `_widthdiag.mjs` pattern in
-[`docs/decisions.md#width`](decisions.md#width).
+viewports** (e.g. write a quick Playwright driver that runs the same
+command at 1280, 1600, 2560, and 3440 widths and screenshots each).
+See [`docs/decisions.md#width`](decisions.md#width) for the three
+layers that have to agree on terminal dimensions.
 
 ### Stale sessions during testing
 
@@ -196,7 +198,7 @@ mid-session.
 
 ### `node-pty` `posix_spawnp failed`
 
-```
+```bash
 chmod +x frontend/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper
 chmod +x frontend/node_modules/node-pty/prebuilds/darwin-x64/spawn-helper
 ```
@@ -213,44 +215,56 @@ The test might be testing the wrong thing. Read its assertion carefully.
 Several motion tests assert *during* the transition; if your fix only
 holds AFTER the transition completes, the test rightly fails.
 
-If you genuinely believe the test is wrong, update it — but only after
-confirming with the user. The motion tests were written deliberately to
-catch specific user-reported flashes.
+If you genuinely believe a test assertion is wrong, change it
+deliberately and document why in the commit message. The motion tests
+were written to catch specific user-reported flashes; weakening one
+without understanding the original bug is how regressions ship.
 
 ## Where things live
 
-```
+Rather than cite line numbers (which drift), search by symbol name.
+Useful entry points:
+
+```text
 backend/server.js
-├── ~line 13–30   debug log, debugLog()
-├── ~line 32–65   extractUserAliases()
-├── ~line 67–82   detectUserShell() + USER_SHELL constant
-├── ~line 100–115 buildBashRc()
-├── ~line 117–225 createSession() — PTY spawn, env, header
-├── ~line 230–245 onData handler (TUI detection + parser)
-├── ~line 246–310 cell close handler, snapshot capture
-├── ~line 380–410 destroySession(), idle GC
-├── ~line 360–445 WebSocket message handler
+├── debugLog()                       debug log writer
+├── extractUserAliases()             parses ~/.bashrc etc. at startup
+├── detectUserShell()                informational; we always spawn bash
+├── buildBashRc()                    per-session rcfile generator
+├── createSession()                  session object + PTY spawn
+├── attachPtyHandlers()              onData (parser + TUI detection)
+│                                    + cell-close + snapshot capture
+├── handleResize()                   min-of-clients arbitration
+├── destroySession()                 cleanup (kill PTY, dispose, rm rc)
+├── idleGc()                         idle-session sweeper
+├── ws.on('message')                 WebSocket message handler
+
+backend/ssh.js
+├── parseSshCommand()                SSH-integration opt-in detection
+├── buildRemoteIntegration()         injected snippet for remote shell
+
+backend/parser.js
+├── parseOutput()                    OSC 133;D + OSC 7 + OSC 1338 matcher
 
 frontend/src/App.jsx
-├── ~line 30–95   state declarations
-├── ~line 55–92   focus management effects
-├── ~line 95–165  scroll behavior (auto-scroll, jump-to-bottom)
-├── ~line 185–215 createNewSession, deleteSession, requestResizeFor
-├── ~line 270–340 WebSocket message handler (output/exit/tui_*/etc.)
-├── ~line 370–400 handleCommand (submit)
-├── ~line 460–510 render() for cells
-├── ~line 511–540 render() for input bar
+├── state declarations               near top of <App> component
+├── focus management useEffect       global keydown for focus return
+├── scroll behavior useEffect        auto-scroll + restore on switch
+├── createNewSession, deleteSession  session lifecycle (+ requestResizeFor)
+├── ws.onmessage handler             output/exit/tui_*/ssh_state/etc.
+├── handleCommand                    chat-input submit + passthrough
+├── render()                         cells + input bar
 
 frontend/src/NotebookCell.jsx
-├── ~line 25–47   trimSnapshotRows helper
-├── ~line 64      component signature (note the prop list)
-├── ~line 79–95   snapshot render effect (uses snapshotCols)
-├── ~line 110–170 live xterm mount + resize + content-rows poll
-├── ~line 175–225 render JSX: header + body + buttons
+├── trimSnapshotRows                 strip leading/trailing empty rows
+├── snapshot render useEffect        uses snapshotCols from exit msg
+├── live xterm useEffect             mount + resize + content-rows poll
+├── render JSX                       header + body + buttons
 ```
 
-These line numbers will drift as the code changes. Use them as a
-starting point, not gospel.
+Search the file (`grep -n 'symbolName' backend/server.js`) for the
+current location. The symbol names are stable across refactors;
+line numbers are not.
 
 ## How to add a new test
 

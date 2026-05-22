@@ -1,0 +1,45 @@
+# Dependabot configuration. Three package ecosystems:
+#   1. backend/  (npm)        — Node server + node-pty + better-sqlite3 + ws + express
+#   2. frontend/ (npm)        — React + Vite + xterm.js + Playwright (devDep)
+#   3. github-actions         — pin the @v4 actions we use across all three workflows
+#
+# Weekly cadence (Monday morning UTC) so PRs cluster and don't drip into the
+# inbox. Patch + minor get grouped per ecosystem; majors get individual PRs.
+
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: UTC
+    open-pull-requests-limit: 5
+    groups:
+      backend-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: UTC
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: UTC
+    open-pull-requests-limit: 3

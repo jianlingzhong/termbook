@@ -1,4 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Self-contained styles. No external CDN dependencies (the prior
+   googleapis.com font import contradicted Termbook's localhost-only
+   stance and broke when offline). System font fallbacks below mean
+   the UI renders fine without any specific font installed; for the
+   intended look install JetBrains Mono (programming font) and any
+   Nerd Font variant for the TUI status-line glyphs. */
 :root {
   --bg-obsidian: #080a10; --bg-panel: rgba(18, 20, 28, 0.95); --bg-cell: #131520;
   --text-primary: #e0e5ff; --text-secondary: #a0aec0; --text-muted: #4b5563;
@@ -6,7 +11,7 @@
   --border-light: rgba(255, 255, 255, 0.1); --border-active: rgba(0, 236, 236, 0.4);
   --sidebar-width: 280px;
 }
-body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', sans-serif; background: var(--bg-obsidian); color: var(--text-primary); overflow: hidden; }
+body, html { margin: 0; padding: 0; height: 100%; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: var(--bg-obsidian); color: var(--text-primary); overflow: hidden; }
 #root { height: 100vh; display: flex; width: 100vw; }
 .app-container { display: flex; width: 100%; height: 100%; overflow: hidden; }
 .sidebar { width: var(--sidebar-width); height: 100%; background: var(--bg-panel); backdrop-filter: blur(32px); border-right: 1px solid var(--border-light); display: flex; flex-direction: column; padding: 24px 16px; flex-shrink: 0; z-index: 100; }

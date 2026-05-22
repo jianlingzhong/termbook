@@ -8,6 +8,17 @@
 //   npm run test:e2e -- --update-snapshots
 //
 // Goldens live in tests/e2e/06_visual_snapshots.spec.mjs-snapshots/
+//
+// IMPORTANT: any UI element that displays a path or hostname derived
+// from the local filesystem (sidebar session IDs, top pwd-breadcrumb,
+// per-cell pwd chip, the chat-input host prefix) MUST be in the
+// `mask` list — those values vary per contributor and would otherwise
+// either fail the diff on every other machine or, worse, bake the
+// original committer's username into the golden PNG forever.
+//
+// The pwd cell test additionally runs commands inside `/tmp` so that
+// the command OUTPUT (which is canvas-rendered xterm content, NOT a
+// DOM element that mask can hide) doesn't carry a username either.
 
 import { test, expect } from '@playwright/test';
 import {
@@ -20,6 +31,18 @@ import {
 
 test.use({ viewport: VIEWPORT });
 
+// Per-contributor volatile UI that must be masked from every golden.
+// Returns a function called with `page` (Playwright doesn't accept
+// re-resolving locators across tests, so we resolve fresh each time).
+const volatileMasks = (page) => [
+    page.locator('.sidebar ul li'),         // session IDs
+    page.locator('.cell-time'),             // wall-clock time
+    page.locator('.cell-duration'),         // ms
+    page.locator('.pwd-breadcrumb'),        // top breadcrumb shows pwd / username
+    page.locator('.cell-header-breadcrumb'),// per-cell pwd chip
+    page.locator('.pwd-prompt-prefix'),     // chat input shows hostname
+];
+
 test.describe('visual snapshots', () => {
 
     test('welcome state pixels match golden', async ({ page }, testInfo) => {
@@ -27,22 +50,21 @@ test.describe('visual snapshots', () => {
         // Wait for layout to settle.
         await page.waitForTimeout(800);
         await expect(page).toHaveScreenshot('welcome.png', {
-            // Mask the session-id chip in the sidebar — it changes every run.
-            mask: [page.locator('.sidebar ul li')],
+            mask: volatileMasks(page),
         });
         await shot(page, testInfo, 'welcome_for_log');
     });
 
     test('cell after pwd matches golden (modulo timestamps and session id)', async ({ page }, testInfo) => {
         await gotoFreshSession(page);
-        await runCommand(page, 'pwd');
+        // Run from /tmp so the pwd OUTPUT is `/tmp`, not the contributor's
+        // home directory. The output text is rendered into xterm's canvas
+        // and cannot be hidden via `mask`, so we change the command
+        // instead.
+        await runCommand(page, 'cd /tmp && pwd');
         await page.waitForTimeout(500);
         await expect(page).toHaveScreenshot('pwd_cell.png', {
-            mask: [
-                page.locator('.sidebar ul li'),
-                page.locator('.cell-time'),    // wall-clock time
-                page.locator('.cell-duration'), // ms
-            ],
+            mask: volatileMasks(page),
         });
         await shot(page, testInfo, 'pwd_for_log');
     });
@@ -53,7 +75,7 @@ test.describe('visual snapshots', () => {
         await page.keyboard.press('Meta+k');
         await page.waitForTimeout(500);
         await expect(page).toHaveScreenshot('palette.png', {
-            mask: [page.locator('.sidebar ul li')],
+            mask: volatileMasks(page),
         });
         await shot(page, testInfo, 'palette_for_log');
     });
@@ -65,11 +87,7 @@ test.describe('visual snapshots', () => {
         await page.keyboard.press('Control+r');
         await page.waitForTimeout(500);
         await expect(page).toHaveScreenshot('history_search.png', {
-            mask: [
-                page.locator('.sidebar ul li'),
-                page.locator('.cell-time'),
-                page.locator('.cell-duration'),
-            ],
+            mask: volatileMasks(page),
         });
         await shot(page, testInfo, 'history_for_log');
     });

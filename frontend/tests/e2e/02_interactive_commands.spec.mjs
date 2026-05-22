@@ -14,7 +14,6 @@ import {
     waitForPassthrough,
     waitForIdle,
     shot,
-    sendKeystrokes,
     lastCellInfo,
 } from './helpers.mjs';
 
@@ -119,7 +118,7 @@ test.describe('interactive commands (passthrough)', () => {
         expect(last.output).toContain('[GOT:abc_ZZ]');
     });
 
-    test('Tab is forwarded (bash readline insertion)', async ({ page }, testInfo) => {
+    test('Tab is forwarded (bash readline insertion)', async ({ page }) => {
         await gotoFreshSession(page);
         // Run a Python REPL where Tab inserts a literal tab character
         // (without readline). Even simpler: use bash `read` and verify the

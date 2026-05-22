@@ -1,11 +1,11 @@
 # Known issues & tradeoffs
 
-Current limitations of Termbook. Some of these are bugs we haven't
-fixed; others are deliberate tradeoffs that we won't fix without a
+Current limitations of Termbook. Some are bugs that haven't been
+fixed; others are deliberate tradeoffs that won't be fixed without a
 strong reason. Read this before reporting "X is broken" — it might be
 intentional.
 
-For the historical bug list (what we've already fixed and why), see
+For the historical bug list (what's already been fixed and why), see
 [decisions.md](decisions.md).
 
 ---
@@ -19,22 +19,25 @@ shell as the server user. There is no auth check.
 
 **Rationale**: it's a localhost dev tool. Adding auth (token? OAuth?
 basic auth?) is non-trivial and out of scope. If you want to expose
-Termbook over a network, use a reverse proxy with auth in front (e.g.,
+Termbook over a network, put it behind a reverse proxy with auth (e.g.,
 nginx with basic auth, or Tailscale's `serve` with identity).
 
-**If you do nothing**: don't bind Termbook to a public IP. The default
-binds to all interfaces, which is fine for `localhost` but dangerous on
-e.g. a Codespaces port forward.
+**If you do nothing**: the backend binds to `127.0.0.1` by default
+(loopback only) so Termbook is unreachable from the LAN out of the
+box. If you set `TERMBOOK_BIND=0.0.0.0` or run it behind a
+container/Codespaces port-forward that proxies external traffic to
+loopback, you've opened a shell to whoever can reach that endpoint —
+put auth in front.
 
 ### Always `/bin/bash` regardless of user shell
 
-We detect the user's `$SHELL` (logged as `[SHELL_DETECT]`) but always
-spawn bash. Aliases are imported but functions, fancy prompts, and
-shell-specific features aren't.
+Termbook detects the user's `$SHELL` (logged as `[SHELL_DETECT]`) but
+always spawns bash. Aliases are imported but functions, fancy prompts,
+and shell-specific features aren't.
 
-**Rationale**: see [decisions.md](decisions.md#shell).
-Powerlevel10k and similar zsh prompt themes actively fight our marker
-injection. Bash with a controlled rcfile is the only setup we found
+**Rationale**: see [decisions.md](decisions.md#shell). Powerlevel10k
+and similar zsh prompt themes actively fight the OSC 133 marker
+injection. Bash with a controlled rcfile is the only setup that proved
 reliable.
 
 ### PTY processes die on server restart (cells survive)
@@ -42,8 +45,8 @@ reliable.
 Restart the backend → the live PTYs themselves are gone (their child
 processes can't be re-attached). But session metadata and finished
 cells **are persisted to `termbook.db` (SQLite)** and reload
-automatically on next page load. The user sees their history; a
-fresh PTY is spawned lazily when they next interact with the session.
+automatically on next page load. The user sees their history; a fresh
+PTY is spawned lazily when they next interact with the session.
 
 **What's still lost on restart**: in-flight commands (anything that
 was running when the backend went down), shell environment (env vars
@@ -56,59 +59,66 @@ is genuinely hard (scrollback, env vars, half-typed input,
 subprocesses). For now, finished cells + last pwd is the right
 trade-off. Use `scripts/restart_servers.sh` so restarts are rare.
 
-DB lives at repo-root `termbook.db` (override with
+The DB lives at repo-root `termbook.db` (override with
 `TERMBOOK_DB_PATH=`). Reset with `node backend/server.js --reset-db`
 or just `rm termbook.db*`.
 
-### No backend tests
+### No backend unit tests
 
-The Jest setup in `backend/package.json` is unused. All testing is
-end-to-end through Playwright.
+All testing is end-to-end through Playwright. There is no Jest or
+similar unit-test runner configured.
 
 **Rationale**: the backend's logic (PTY wrangling, OSC parsing) is
 hard to unit-test in isolation — most bugs are about how it interacts
 with real shells. E2E catches those; unit tests would be theater.
 
-If you change `parser.js` and want quick feedback, the
+If you change `parser.js` and want quick feedback,
 `grep -E "FINISH|MARKER" ssr_debug.log` after a real session is faster
-than writing a Jest test.
+than writing a unit test.
 
 ### No TypeScript
 
-Plain JavaScript / JSX. The `typescript` devDep in `backend/package.json`
-is unused.
+Plain JavaScript / JSX everywhere. Backend uses CommonJS, frontend uses
+ESM.
 
-**Rationale**: backend is ~450 lines, frontend is ~1300 lines. TS
+**Rationale**: backend is ~1100 lines, frontend is ~1300 lines. TS
 overhead isn't worth the safety at this size. If the codebase doubles,
 revisit.
 
-### `xterm.js` DOM renderer, not WebGL
+### `xterm.js` WebGL renderer with DOM fallback
 
-`App.jsx` doesn't pass `rendererType: 'webgl'` to xterm. We use the
-default DOM renderer.
+`App.jsx` loads `@xterm/addon-webgl` and activates it when WebGL is
+available. When it's not (older browsers, headless Chromium without
+GPU, software-rendered VMs), xterm silently falls back to the DOM
+renderer.
 
-**Rationale**: WebGL is faster but browsers cap WebGL contexts at ~16.
-Every notebook cell that's ever been "live" needs its own xterm
-instance; with WebGL, opening 20 cells exhausted contexts and crashed
-the GPU. DOM renderer is slightly slower but doesn't have the cap.
+**Why WebGL**: the DOM renderer's font-metric cellWidth is fractional
+(e.g. ~7.81px for JetBrains Mono 13px). The absolutely-positioned
+cursor overlay drifts off-grid after many cursor moves in apps like
+nvim. WebGL draws every cell at integer pixel boundaries, so the
+cursor stays aligned.
 
-For typical use (echo/ls/cat) the difference is invisible. For real-
-time TUIs (vim/top), there can be visible lag on very large terminals
-(>200 cols × 60 rows). Acceptable trade.
+**Cost of WebGL**: contexts are limited (browsers cap around 16
+simultaneous WebGL contexts). Each notebook cell that's ever been
+"live" needs an xterm instance. Termbook disposes the live xterm when
+a cell finishes (the snapshot is rendered to HTML), keeping the active
+WebGL count low — but if a single session keeps many cells alive at
+once (e.g. several long-running commands in parallel), context
+exhaustion is theoretically possible.
 
 ---
 
 ## Bugs we know about but haven't fixed
 
-### opencode looks tiny in modal
+### Some TUI apps render small inside the generous modal
 
-opencode's TUI centers itself in any terminal size. Our modal gives it
-1800×1200 (max) but opencode draws its UI in a fixed-size box in the
-middle, with empty padding around it.
+Apps that center themselves in a fixed-size UI box (regardless of
+terminal dimensions) leave empty padding inside Termbook's modal. The
+modal sizes the PTY up to 1800×1200; if the app draws into only 80×24
+of that, the rest stays empty.
 
-**Not our bug**: it's opencode's UI design choice. If you want their UI
-to fill the modal, take it up with the opencode project. We
-give them all the room.
+**Not Termbook's bug**: it's the app's UI design choice. Termbook
+gives it the full modal area to work with.
 
 ### Background jobs leak output into the next cell
 
@@ -117,86 +127,64 @@ ping 8.8.8.8 &      # cell A finishes, ping keeps running
 ls                  # cell B — but ping's output bleeds in
 ```
 
-The PTY is shared across cells. Backgrounded processes still own stdout.
-There's no way to redirect their output to a "background" buffer because
-bash has one stdout per process.
+The PTY is shared across cells. Backgrounded processes still own
+stdout. There's no way to redirect their output to a "background"
+buffer because bash has one stdout per process.
 
-**Workarounds**: redirect explicitly (`ping 8.8.8.8 > /tmp/ping.log &`)
-or accept the leak.
+**Workarounds**: redirect explicitly
+(`ping 8.8.8.8 > /tmp/ping.log &`) or accept the leak.
 
-We could detect mid-cell output that doesn't follow a `start` and route
-it elsewhere, but the implementation is gnarly and the use case is
-edge-y.
-
-### ✅ Cursor in nvim used to drift off-grid after multiple j/k presses
-
-Used to be: while navigating in nvim with j/k arrow keys, the cursor
-block (or bar) would start to render between character cells instead of
-sitting on top of one — visible as a half-block straddling two chars.
-
-Cause: xterm.js's DOM renderer computed cellWidth from font metrics.
-JetBrains Mono at 13px → cellWidth = ~7.81px (fractional). The cursor
-overlay was an absolutely-positioned div at `left = col * cellWidth`.
-After many cursor moves the accumulated rounding error caused
-sub-pixel drift.
-
-Resolved by switching to `@xterm/addon-webgl` — see
-[decisions.md#xterm-webgl](decisions.md#xterm-webgl). The WebGL
-renderer draws every cell at integer pixel boundaries on a canvas, so
-the cursor is always pixel-aligned. The fix is verified by an e2e test
-that asserts cellWidth is an integer in the modal terminal.
-
-(In environments without GPU/WebGL — older browsers, headless Chromium
-without `--enable-webgl`, software rendering — xterm silently falls
-back to DOM and the cursor drift returns. Acceptable degradation.)
+Detecting mid-cell output that doesn't follow a `start` and routing it
+elsewhere is possible but gnarly, and the use case is edge-y.
 
 ### Long-running commands stream nothing for a few seconds
 
 Output is buffered up to ~64KB before being flushed. For commands that
 emit slowly (`while true; do echo foo; sleep 1; done`), this is fine.
-For commands that emit a steady stream of small writes, the user sees
-nothing for a while, then a burst.
+For commands that emit a steady stream of small writes, nothing
+appears for a while, then a burst.
 
-**Cause**: node-pty's default buffering + our ~50ms throttle in the
+**Cause**: node-pty's default buffering + a ~50ms throttle in the
 `onData` handler.
 
 **Not fixed because**: tightening the throttle generates more
-WebSocket traffic per cell and the SIGWINCH-storm prevention work
-became delicate. Not worth touching without a real complaint.
+WebSocket traffic per cell and the SIGWINCH-storm prevention work is
+delicate. Not worth touching without a real complaint.
 
-### the SSH integration: cosmetic prompt residue in remote cell snapshots
+### SSH: cosmetic prompt residue in remote cell snapshots
 
-When the SSH integration is active, each remote-issued cell's snapshot tail often
-contains an extra line or two of the remote shell's prompt re-rendering
-(e.g. p10k's right-side prompt drawing). The cell's exit code, pwd, and
-git chip are all correct; this is purely visual noise at the bottom of
-the snapshot.
+When the SSH integration is active, each remote-issued cell's snapshot
+tail often contains an extra line or two of the remote shell's prompt
+re-rendering (e.g. p10k's right-side prompt drawing). The cell's exit
+code, pwd, and git chip are all correct; this is purely visual noise
+at the bottom of the snapshot.
 
-**Cause**: `__tb_remote_prompt` runs as `precmd` / `PROMPT_COMMAND` BEFORE
-the next prompt prints, but the remote shell typically also has its own
-prompt-drawing logic that writes a line of output. We capture the snapshot
-at the next salted finish marker, which includes any output the remote
-shell wrote between the previous command and our marker.
+**Cause**: the remote prompt hook runs BEFORE the next prompt prints,
+but the remote shell typically also has its own prompt-drawing logic
+that writes a line of output. The snapshot is captured at the next
+salted finish marker, which includes any output the remote shell wrote
+between the previous command and the marker.
 
 **Not fixed because**: stripping prompt artifacts heuristically risks
-chopping legitimate trailing output. Cosmetic; ignored for v1.
+chopping legitimate trailing output. Cosmetic only.
 
-### the SSH integration: per-SSH salt is plaintext on the remote
+### SSH: integration salt is plaintext on the remote
 
-The `sshSalt` is injected into the remote shell's environment as part of
-PROMPT_COMMAND. Any process on the remote that can read the shell's
-environment (e.g. `cat /proc/$$/environ` on Linux, or `ps eww` viewing
-your own process env) can read the salt and forge cell-close markers.
+The per-SSH salt is injected into the remote shell's environment as
+part of `PROMPT_COMMAND`. Any process on the remote that can read the
+shell's environment (e.g. `cat /proc/$$/environ` on Linux, or
+`ps eww` viewing your own process env) can read the salt and forge
+cell-close markers.
 
-**Threat model**: Termbook targets local / dev / self-owned hosts. If you
-SSH into a truly untrusted shared host, use `ssh --no-termbook` to disable
-the integration.
+**Threat model**: Termbook targets local / dev / self-owned hosts. If
+you SSH into a truly untrusted shared host, use `ssh --no-termbook` to
+disable the integration.
 
-**Same model** as the local salt — also plaintext in `PROMPT_COMMAND` of
-your local bash; any local process can read it. Documented for
+**Same model** as the local salt — also plaintext in `PROMPT_COMMAND`
+of your local bash; any local process can read it. Documented for
 completeness.
 
-### the SSH integration: nested SSH only injects on the outermost
+### SSH: nested SSH only injects on the outermost connection
 
 `ssh host1`, then on host1 `ssh host2` — only host1 gets the salted
 integration. The inner ssh is treated as a normal remote command from
@@ -204,239 +192,38 @@ Termbook's POV. Inner commands run inside one wrap-cell with no
 per-command boundaries.
 
 **Could be fixed** by detecting `ssh` commands typed INSIDE an active
-the SSH integration session and re-running the inject machinery for the inner shell.
-Punted for v1; not a common-enough workflow to justify the state-machine
-complexity.
+SSH session and re-running the inject machinery for the inner shell.
+Not done because nested-interactive-ssh isn't a common workflow.
 
-### the SSH integration: integration fails silently after 8 seconds
+### SSH: integration fails silently after 12 seconds
 
 If the remote shell isn't bash or zsh, or has output suppression that
-swallows our salted printf, the inject won't yield a salted marker.
-`SSH_INJECT_TIMEOUT` fires and `sshState='failed'`. The session degrades
-to the pre-feature behavior (one big cell, unsalted markers from remote
-may close cells). No user-visible error.
+swallows the salted printf, the inject won't yield a salted marker.
+The 12-second injection-timeout fires, and the session degrades to
+the pre-integration behavior (one big cell, unsalted markers from
+remote may close cells). No user-visible error.
 
-**Should** surface this as a small UI indicator (e.g. "integration off"
-chip with a tooltip explaining how to retry). Not done in v1.
-
----
-
-## Recently resolved (kept here briefly for context)
-
-### ✅ `cat` (no args) used to hang — now works
-
-Used to be: `cat` blocked forever because there was no way to send
-stdin to a running command from Termbook.
-
-Resolved by passthrough mode (see [decisions.md#passthrough](decisions.md#passthrough)).
-Type lines, press Ctrl+D, cat exits.
-
-### ✅ gemini-cli used to exit immediately with "No input via stdin"
-
-Used to be: gemini-cli detected `CI=true` (inherited from the shell
-that launched the backend) and went into headless mode, then errored
-because there was no piped input.
-
-Resolved by stripping CI-detection env vars from the PTY spawn
-(see [decisions.md#ci-strip](decisions.md#ci-strip)).
-
-### ✅ "Inline TUI" cells used to have no way to interact
-
-Used to be: gemini-cli, claude-cli, ink-based CLIs rendered inline in
-the cell, but the chat input was disabled while the command ran. The
-user could see the prompt but couldn't type into it.
-
-Resolved by passthrough mode (see [decisions.md#passthrough](decisions.md#passthrough)).
-Whenever a non-alt-screen command is running, the chat input forwards
-every keystroke (including Enter, arrows, Ctrl+C/D, etc.) to the
-running command's PTY.
-
-### ✅ SSH used to be "pre-integration" with wrong chip data
-
-Used to be: `ssh user@host` worked thanks to remote shells emitting OSC
-133;D markers (p10k, atuin) — but those markers were unsalted, so the
-parser fell back to the "anyExitRegex" path. Each remote command became
-a cell with LOCAL pwd / LOCAL git branch chips, even though the cell ran
-remotely. Tab completion and ArrowUp history also used local state.
-Worst of all: any remote command could spoof cell boundaries by emitting
-its own `\033]133;D;0\007`.
-
-Resolved by the SSH integration integration (see
-[decisions.md#ssh-path-b](decisions.md#ssh-path-b)) — Termbook now
-auto-injects a salted shell-integration into the remote shell, so each
-remote command becomes a proper cell with REAL remote pwd / git / exit.
-Unsalted markers are explicitly rejected while in an active SSH session.
-
-### ✅ Tab completion in SSH used to use the LOCAL filesystem
-
-Used to be: even after the SSH integration landed, Tab in the chat input still hit
-local `/api/complete` against `session.pwd`. On loopback (the e2e
-testbed) this looked correct because the filesystem is shared; on a real
-remote host Tab returned no candidates.
-
-Resolved by remote PTY-RPC completion (see
-[decisions.md#ssh-tab-completion](decisions.md#ssh-tab-completion)) —
-the integration's `__tb_complete` function does glob expansion in the
-remote shell; backend reads the salted response and routes it back to
-the frontend transparently.
-
-### ✅ Ctrl+D / Ctrl+C in chat input had no effect during the SSH integration idle
-
-Used to be: between remote commands, the chat input was a normal local
-React textarea. Ctrl+D did nothing (could not exit SSH session by EOF as
-in every real terminal); Ctrl+C cleared the input but did not propagate
-to the remote shell's line editor.
-
-Resolved by control-key forwarding (see
-[decisions.md#ssh-ctrl-forwarding](decisions.md#ssh-ctrl-forwarding)) —
-when `sessionSshActive[id]`, Ctrl+D-on-empty sends `\x04` to the remote
-PTY (EOFs the remote shell → ssh exits); Ctrl+C sends `\x03` (clears any
-partial line on remote) AND clears the chat input locally.
-
-### ✅ Remote cells had trailing prompt-redraw noise in snapshots
-
-Used to be: every the SSH integration cell's snapshot included 1-2 lines of the remote
-shell's next-prompt drawing (`~ user@host` + `❯`) because the headless
-terminal captured everything through ~300ms after the salted finish
-marker, by which time p10k had redrawn the next prompt. Visual noise
-made the notebook look messy.
-
-Resolved by frontend snapshot trimming (see
-[decisions.md#ssh-snapshot-trim](decisions.md#ssh-snapshot-trim)). The
-`trimSnapshotRows` helper now strips trailing rows that are recognizably
-prompt-only (require a STRONG signal — Powerline glyph, user@host, or a
-prompt char like ❯/$/#/% — and every other byte must belong to a known
-prompt fragment). NBSP padding is normalized before the heuristics run.
-
-### ✅ No always-visible signal that current session is inside SSH
-
-Used to be: the only indicator that the top-of-screen pwd was REMOTE
-was the per-cell SSH chip on the right edge of each cell. With multiple
-sessions in the sidebar you couldn't tell which were remote without
-clicking through. And while typing in the chat input, your eyes were on
-the input box but no signal was anywhere near where the cursor was.
-
-Resolved by showing the host in THREE deliberate places (all orange,
-each answering a different question — see
-[decisions.md#ssh-visibility](decisions.md#ssh-visibility)):
-(a) **input prompt prefix** — replaces `termbook ❯` with `🖥 host ❯`
-    right where the user types; primary safety signal.
-(b) sidebar Server icon + orange left border — tells sessions apart.
-(c) per-cell SSH chip — context when scrolling through history.
-
-A fourth indicator (top-header chip) was tried for one commit then
-removed: with the input-prefix badge in place, a header chip just
-duplicates information ~200px above with no new value.
-
-### ✅ Ctrl+D in SSH did nothing visible, didn't actually exit
-
-Used to be: pressing Ctrl+D in SSH chat input sent `\x04` to the PTY.
-On many remote shells (zsh with vi-mode, custom configs) ^D is bound
-to `list-choices` not EOF, so it silently did nothing. The badge
-stayed visible. Trying to ssh again hung forever.
-
-Resolved by Ctrl+D synthesizing a real `exit` cell submission instead
-of writing raw bytes (see
-[decisions.md#ssh-ctrl-d-exit-cell](decisions.md#ssh-ctrl-d-exit-cell)).
-The user sees an "exit" cell appear (visible feedback), the cell
-lifecycle correctly tears down SSH state, and the next ssh works.
-
-### ✅ nvim rendered inline with broken layout
-
-Used to be: opening `nvim file.txt` rendered the file inline in the
-cell with content cut off, status line orphaned, and a perpetually
-spinning cell.
-
-Resolved by pre-promoting known TUI apps to the modal at command-start
-time (see [decisions.md#tui-pre-promote](decisions.md#tui-pre-promote)).
-Modern neovim doesn't emit `\x1b[?1049h`, so the alt-screen
-auto-detect never fires. The curated `KNOWN_TUI_COMMANDS` list catches
-nvim/vim/emacs/htop/less/etc. and opens the modal before the app
-starts drawing.
-
-### ✅ Local prompt prefix said meaningless "termbook"
-
-Used to be: when not in SSH, the chat input prefix showed `termbook ❯`,
-a generic placeholder. Once SSH prefix became `host ❯`, the local
-prefix should parallel it.
-
-Resolved: local prefix now shows the actual hostname (see
-[decisions.md#local-prompt-hostname](decisions.md#local-prompt-hostname)).
-`os.hostname()` from the backend, `.local` suffix stripped on macOS.
-
-### ✅ First-token Tab completion didn't work for remote commands
-
-Used to be: `gi<Tab>` (or any partial command name) returned nothing on
-remote because `__tb_complete` only globbed `gi*` in remote cwd. Path
-completion worked; command completion didn't.
-
-Resolved by extending the remote integration's `__tb_complete` function
-to accept a `kind` argument ('cmd' or 'path'). For 'cmd' it walks `$PATH`
-collecting executables plus merges shell builtins/aliases/functions
-(bash via `compgen -bafk`, zsh via `${(k)builtins}` etc.). Backend's
-`requestRemoteCompletion` detects first-token (no spaces in input) and
-sets kind='cmd' automatically. `gi<Tab>` → `git`, `ec<Tab>` → `echo`.
-
----
-
-## Repo hygiene issues (planned cleanup, not yet done)
-
-These will get a dedicated cleanup commit when an agent has the
-focus. Documented here so the next agent knows they're known.
-
-### earlier screenshot output and earlier ad-hoc `.spec.js` files
-
-The repo root and `frontend/tests/` contain a huge volume of leftover
-debugging artifacts from the original SSR architecture rewrite.
-Examples:
-
-- `gemini_tui_frame_*.png` × dozens at repo root
-- `gemini_tui_screencast*.webm` × several
-- `audit_dir/`, `check_frames/`, `colfix_frames/`, `final_fixed_frames/`,
-  `frames_audit/`, `offbyone_frames/`, `screenshots/`
-- `frontend/tests/*.spec.{js,ts}` × ~50 files
-
-None of these are referenced by current code or tests. They're
-preserved because they're evidence of past debugging work and the user
-hasn't asked to delete them. **An agent should NOT delete them without
-explicit permission.**
-
-### Old `docs/` files are stale
-
-`docs/earlier-design-notes.md`, `docs/earlier-design-notes.md`,
-`docs/refactor_plan.md`, `docs/progress_report.md`,
-`docs/architecture_suggestions.md`, `docs/gemini_tui_analysis_report.md`
-predate the current architecture. They describe planned/proposed
-designs, some of which were implemented and most of which weren't.
-
-The current docs of record are:
-- [architecture.md](architecture.md)
-- [decisions.md](decisions.md)
-- [development.md](development.md)
-- this file
-
-Leave the old `*_plan.md` / `*_critique.md` / `*_report.md` / etc. in
-place for now. They might be useful historical reference.
-
-### `backend/server.js` is one big file
-
-~450 lines, all in one file: session management, WS handling, PTY
-spawning, parser invocation, GC, REST endpoints. Could be split into
-`session.js`, `ws.js`, `pty.js`, etc.
-
-**Not split because**: at 450 lines, the whole thing fits in one
-mental model. Splitting introduces import bookkeeping without making
-anything clearer. Revisit if it crosses ~1000 lines.
+**Should** surface this as a small UI indicator (e.g. "integration
+off" chip with a tooltip explaining how to retry). Not done yet.
 
 ### No mobile layout
 
 `@media (max-width: 768px)` rules exist in `index.css` and hide the
-sidebar, but the layout hasn't been carefully tested on phones.
-Touch interactions (especially the input textarea with iOS Safari's
+sidebar, but the layout hasn't been carefully tested on phones. Touch
+interactions (especially the input textarea with iOS Safari's
 keyboard) might be janky.
 
-**Not fixed because**: nobody has reported using Termbook on mobile.
-Termbook's value proposition isn't great on a 6" screen anyway.
+**Not fixed because**: Termbook's value proposition isn't great on a
+6" screen anyway.
+
+### Windows is untested
+
+`node-pty` has known Windows quirks (ConPTY vs Cygwin PTY, prebuild
+issues). Termbook has never been tried on Windows.
+
+**If you're on Windows**: WSL2 is the recommended path — run Termbook
+inside the WSL Linux environment and access it from a Windows browser
+at `http://localhost:4000`.
 
 ---
 
@@ -446,9 +233,9 @@ If any of the following becomes a real ask, the corresponding "won't
 fix" entry should be reconsidered:
 
 - **Auth becomes needed** → token-in-URL is the easiest minimum.
-- **User insists on their actual shell** → revisit the marker injection
-  via a `LD_PRELOAD`-style approach, or wrap the shell in a tiny
-  Rust/Go binary that always emits the marker.
+- **Insistence on the user's actual shell** → revisit the marker
+  injection via an `LD_PRELOAD`-style approach, or wrap the shell in a
+  tiny Rust/Go binary that always emits the marker.
 - **Live PTY persistence (not just cell metadata)** → spawn shells
   under a session manager (tmux/screen) and reattach on restart. The
   current SQLite layer covers finished cells + last pwd, which has

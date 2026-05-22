@@ -1,0 +1,21 @@
+# Gitleaks configuration for Termbook.
+#
+# We extend the default ruleset and declare two intentional exclusions:
+#
+#   - .env: gitignored runtime file (never tracked in git). Local
+#     developers may put their own API keys here for using AI-integrated
+#     terminal commands, but the file is never committed.
+#   - frontend/dist/: gitignored build output. Vite's minifier
+#     occasionally produces variable names that look like API keys to
+#     entropy-based scanners (false positives).
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Termbook intentional allowlist"
+paths = [
+  '''^\.env(\..*)?$''',
+  '''^frontend/dist/''',
+  '''^dist/''',
+]

@@ -16,7 +16,6 @@
 //   - Video: test-results/<test-name>/video.webm (auto, via playwright config)
 //   - HTML report: playwright-report-e2e/ (auto)
 
-import { expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 

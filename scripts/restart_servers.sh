@@ -7,7 +7,6 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 tmux kill-session -t "$TMUX_BE" 2>/dev/null || true
 tmux kill-session -t "$TMUX_FE" 2>/dev/null || true
 pkill -f "node server.js" 2>/dev/null || true
-pkill -f pty_wrapper.py 2>/dev/null || true
 rm -f "$ROOT"/backend/termbook_bashrc_* 2>/dev/null || true
 
 sleep 1
