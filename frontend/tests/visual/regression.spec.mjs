@@ -52,7 +52,14 @@ test.describe('regression', () => {
     test('vim renders inside TUI modal and closes cleanly', async ({ page }) => {
         await gotoFreshSession(page);
         const inp = await waitInputReady(page);
-        await inp.fill('vim -u NONE /tmp/_regress_vim.txt');
+        // Use vim's default startup (let it load system vimrc). On Ubuntu,
+        // the system vimrc is what enables alt-screen mode via `set t_ti`/
+        // `t_te`. Previously we used `-u NONE` (no vimrc at all), which
+        // worked on macOS because the bundled vim has alt-screen on by
+        // default but failed on Ubuntu CI where the alt-screen escape
+        // never gets emitted — and without `\x1b[?1049h` Termbook's TUI
+        // promotion doesn't fire, so vim rendered inline.
+        await inp.fill('vim /tmp/_regress_vim.txt');
         await inp.press('Enter');
         await page.waitForTimeout(3000);
 
@@ -74,7 +81,9 @@ test.describe('regression', () => {
     test('TUI exit shows compact placeholder', async ({ page }) => {
         await gotoFreshSession(page);
         const inp = await waitInputReady(page);
-        await inp.fill('vim -u NONE /tmp/_regress_vim2.txt');
+        // Default startup (load system vimrc) — see the comment on the
+        // sibling vim test above. `-u NONE` breaks alt-screen on Ubuntu.
+        await inp.fill('vim /tmp/_regress_vim2.txt');
         await inp.press('Enter');
         await page.waitForTimeout(2500);
         await page.keyboard.press('Escape');
@@ -212,12 +221,9 @@ test.describe('regression', () => {
     // cols, not ~120.
     test('PTY uses available horizontal space (ls fills width)', async ({ page }) => {
         await gotoFreshSession(page);
-        // Build a known dir with enough short-named files that `ls` will
-        // pack them onto one wide row. Previously the test relied on
-        // whatever was in the backend's launch dir, which made it flaky
-        // across environments — locally my repo's backend/ had enough
-        // chars to fill 140 columns, but CI's freshly-cloned backend/
-        // didn't. Now we control the input exactly.
+        // Build a known dir with enough short-named files that `ls` packs
+        // multiple columns. Previously the test relied on the backend's
+        // launch dir, which made it flaky across environments.
         await runCommand(page, 'mkdir -p /tmp/tb_width_test && cd /tmp/tb_width_test && rm -f f_* && for i in $(seq 1 30); do touch f_$(printf "%02d" $i); done && ls', 5000);
         const data = await page.evaluate(() => {
             const cells = document.querySelectorAll('.notebook-cell');
@@ -225,18 +231,30 @@ test.describe('regression', () => {
             const output = cell?.querySelector('.cell-output');
             const snapshot = cell?.querySelector('.snapshot-output');
             const rowDivs = snapshot?.querySelectorAll('pre > div > div') || [];
-            const firstRow = rowDivs[0];
             return {
                 outputWidth: output?.getBoundingClientRect().width || 0,
-                firstRowCharCount: firstRow?.textContent.length || 0,
+                rowCount: rowDivs.length,
+                colsPerRow: rowDivs[0] ? (rowDivs[0].textContent.match(/f_\d{2}/g) || []).length : 0,
             };
         });
-        // outputWidth at 1600 viewport is ~1208px. With a 9px char width
-        // we should fit at least 130 columns. The bug was 120 or less.
-        // 30 files named f_NN (4 chars each) means ls will pack many per
-        // row; the first row will easily exceed 140 chars.
+        // The bug we want to catch: PTY thinks the terminal is 80 cols
+        // wide regardless of viewport, so `ls` of 30 4-char files packs
+        // them into 10+ rows of 3 files each. The fix made the PTY honor
+        // viewport-derived cols, so a 1600-wide viewport produces enough
+        // columns that 30 short files fit in 2-3 rows.
+        //
+        // Use pixel width + column-count rather than absolute char count
+        // — the char count is font-dependent (JetBrains Mono on local,
+        // bitmap monospace on CI without the font installed), but column
+        // count of `ls` is purely a function of terminal cols which we
+        // control.
         expect(data.outputWidth).toBeGreaterThan(1000);
-        expect(data.firstRowCharCount).toBeGreaterThan(140);
+        // 30 files in <= 5 rows means at least 6 columns per row.
+        // Locally (~134 cols) we get 15 per row; CI (~95 cols) gets ~10
+        // per row. 6 is a comfortable floor that proves the bug is fixed
+        // without coupling to font metrics.
+        expect(data.rowCount).toBeLessThanOrEqual(5);
+        expect(data.colsPerRow).toBeGreaterThanOrEqual(6);
     });
 
     // Tab completion: hitting Tab on a partial token should expand to the
@@ -358,10 +376,14 @@ test.describe('regression', () => {
     test('cells show venv chip after source activate', async ({ page }) => {
         await gotoFreshSession(page);
         await waitInputReady(page);
-        // Build a venv we control. Use python3 -m venv which is on most macs.
-        await runCommand(page, 'rm -rf /tmp/tb_test_venv && python3 -m venv /tmp/tb_test_venv', 5000);
-        await runCommand(page, 'source /tmp/tb_test_venv/bin/activate && echo VENVON', 1800);
-        await runCommand(page, 'echo afterwards', 1500);
+        // Build a venv we control. `python3 -m venv` on cold CI can take
+        // 10+ seconds (pip + setuptools install). Use --without-pip to
+        // skip that: the venv still has a working activate script + sets
+        // VIRTUAL_ENV correctly (which is all the chip detection needs)
+        // and creation is sub-second.
+        await runCommand(page, 'rm -rf /tmp/tb_test_venv && python3 -m venv --without-pip /tmp/tb_test_venv', 15000);
+        await runCommand(page, 'source /tmp/tb_test_venv/bin/activate && echo VENVON', 3000);
+        await runCommand(page, 'echo afterwards', 3000);
 
         // The third cell (echo afterwards) must have a venv chip.
         const data = await page.evaluate(() => {
@@ -619,9 +641,10 @@ test.describe('regression', () => {
     // prevents the venv activate script from mutating PS1.
     test('venv activation does not leak (venv) prompt into cell output', async ({ page }) => {
         await gotoFreshSession(page);
-        await runCommand(page, 'rm -rf /tmp/tb_test_venv2 && python3 -m venv /tmp/tb_test_venv2', 5000);
-        await runCommand(page, 'source /tmp/tb_test_venv2/bin/activate && echo ON', 1800);
-        await runCommand(page, 'echo CLEAN_OUTPUT', 1500);
+        // --without-pip: skip the slow pip install (10s+ on CI cold runs).
+        await runCommand(page, 'rm -rf /tmp/tb_test_venv2 && python3 -m venv --without-pip /tmp/tb_test_venv2', 15000);
+        await runCommand(page, 'source /tmp/tb_test_venv2/bin/activate && echo ON', 3000);
+        await runCommand(page, 'echo CLEAN_OUTPUT', 3000);
 
         const lastBody = await page.evaluate(() => {
             const cells = Array.from(document.querySelectorAll('.notebook-cell'));

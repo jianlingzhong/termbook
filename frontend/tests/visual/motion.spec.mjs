@@ -58,7 +58,10 @@ test.describe('motion stability', () => {
     test('TUI exit collapses to compact placeholder (no giant empty box)', async ({ page }) => {
         await gotoFreshSession(page);
         const inp = await waitInputReady(page);
-        await inp.fill('vim -u NONE /tmp/_motion_vim.txt');
+        // Default startup (load system vimrc) so alt-screen mode works
+        // on distros where `-u NONE` would skip `t_ti`/`t_te` setup.
+        // Ubuntu specifically needs the system vimrc for that.
+        await inp.fill('vim /tmp/_motion_vim.txt');
         await inp.press('Enter');
         await page.waitForTimeout(2500);
 
