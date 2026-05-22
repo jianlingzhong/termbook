@@ -53,7 +53,7 @@ test.describe('alt-screen TUIs', () => {
         // usedTui implies no snapshot of vim's screen — by design.
     });
 
-    test('vim cell does NOT enter passthrough mode (modal owns input)', async ({ page }, testInfo) => {
+    test('vim cell does NOT enter passthrough mode (modal owns input)', async ({ page }) => {
         await gotoFreshSession(page);
         await startCommand(page, 'vim /tmp/tb_vim_pt_test.txt');
         await page.waitForSelector('.tui-modal-overlay', { timeout: 8000 });
@@ -246,7 +246,7 @@ test.describe('alt-screen TUIs', () => {
         await waitForIdle(page, 10000);
     });
 
-    test('xterm uses WebGL renderer (eliminates cursor sub-pixel drift)', async ({ page }, testInfo) => {
+    test('xterm uses WebGL renderer (eliminates cursor sub-pixel drift)', async ({ page }) => {
         // Background: xterm's DOM renderer computes cellWidth from font
         // metrics and often gets a fractional value (JetBrains Mono 13px
         // → 7.81px). The cursor block, rendered as an absolutely-

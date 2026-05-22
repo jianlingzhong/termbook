@@ -24,20 +24,25 @@
 //   - known_hosts seeded at /tmp/termbook-e2e-sshd/known_hosts
 
 import { test, expect } from '@playwright/test';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
-    VIEWPORT, gotoFreshSession, waitInputReady, runCommand, shot, lastCellInfo, waitForPassthrough, waitForIdle,
+    VIEWPORT, gotoFreshSession, waitInputReady, runCommand, shot, waitForPassthrough, waitForIdle,
 } from './helpers.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 test.use({ viewport: VIEWPORT });
 
 const SSH_HOST = '127.0.0.1';
 const SSH_PORT = 2222;
 // Some dev environments shadow `ssh` with a wrapper that requires
-// hardware key taps (e.g. corp-managed `gnubby-ssh` in /usr/local/bin/ssh).
-// In those environments the 2nd, 3rd, ... ssh in the same test run hang
-// waiting for a tap that never comes. The test SUT works fine with any
-// ssh client, so just invoke the real Apple ssh directly to keep CI
-// deterministic. Override with TERMBOOK_E2E_SSH_BIN if needed.
+// hardware key taps (e.g. corp-managed gnubby-ssh in /usr/local/bin).
+// In those environments the 2nd, 3rd, ... ssh in the same test run
+// hang waiting for a tap that never comes. The test SUT works fine
+// with any ssh client, so invoke the real system ssh directly to keep
+// CI deterministic. Override with TERMBOOK_E2E_SSH_BIN if needed.
 const SSH_BIN = process.env.TERMBOOK_E2E_SSH_BIN || '/usr/bin/ssh';
 
 // Helper: submit a command and wait for the ssh session to become active.
@@ -154,7 +159,10 @@ test.describe('SSH session — Path B by default', () => {
         await gotoFreshSession(page);
         await loginSsh(page);
         // termbook itself is a git repo accessible to the remote (loopback).
-        await runRemote(page, 'cd /Users/' + process.env.USER + '/personal/termbook');
+        // Resolve the repo path at test time so this works on any
+        // contributor's machine, not just the original author's.
+        const repoRoot = path.resolve(__dirname, '..', '..', '..');
+        await runRemote(page, `cd ${repoRoot}`);
         await runRemote(page, 'git rev-parse --abbrev-ref HEAD');
         await shot(page, testInfo, '01_after_git');
 
@@ -428,8 +436,6 @@ test.describe('SSH session — Path B by default', () => {
         // And critically: a 2ND SSH attempt must work. Previously the
         // unsealed first-SSH state caused the 2nd ssh to spin forever.
         await loginSsh(page); // throws on timeout — that's the regression we'd catch
-        const c2 = await inspectCells(page);
-        const lastSsh = c2.filter(x => x.sshChip).slice(-1)[0];
         // After 2nd loginSsh, at least the new ssh cell is closed-as-active
         // and we're in Path B again. The `.pwd-prompt-prefix-ssh` element
         // is driven by the `ssh_state` WS message, which races against the

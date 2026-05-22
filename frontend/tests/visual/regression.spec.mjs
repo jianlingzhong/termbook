@@ -348,7 +348,7 @@ test.describe('regression', () => {
     // subsequent cells. Tests the OSC 1338 TBENV side-channel.
     test('cells show venv chip after source activate', async ({ page }) => {
         await gotoFreshSession(page);
-        const inp = await waitInputReady(page);
+        await waitInputReady(page);
         // Build a venv we control. Use python3 -m venv which is on most macs.
         await runCommand(page, 'rm -rf /tmp/tb_test_venv && python3 -m venv /tmp/tb_test_venv', 5000);
         await runCommand(page, 'source /tmp/tb_test_venv/bin/activate && echo VENVON', 1800);

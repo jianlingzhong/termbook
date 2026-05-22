@@ -13,7 +13,6 @@ import {
     VIEWPORT,
     gotoFreshSession,
     runCommand,
-    waitInputReady,
     shot,
     lastCellInfo,
     cellCount,

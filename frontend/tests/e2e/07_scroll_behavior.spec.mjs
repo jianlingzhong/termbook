@@ -233,7 +233,6 @@ test.describe('scroll behavior — content shape × scroll state × switch patte
         await gotoFreshSession(page);
         for (const c of ['echo A1', 'seq 1 80', 'echo A3_latest']) await runCommand(page, c);
         await userScrollUp(page, 10000);
-        const aScroll = (await scrollGeometry(page)).scrollTop;
         await shot(page, testInfo, 'A_scrolled_top');
 
         // B: never scrolled (will default to latest-at-top on return)
@@ -257,7 +256,6 @@ test.describe('scroll behavior — content shape × scroll state × switch patte
 
         // Switch to B: never scrolled, so latest at top
         await switchToSessionByIndex(page, 1);
-        const bReturn = await scrollGeometry(page);
         await shot(page, testInfo, 'returned_to_B_default');
         await assertLatestCellAtTop(page);
 
@@ -286,7 +284,6 @@ test.describe('scroll behavior — content shape × scroll state × switch patte
             await shot(page, testInfo, `bounce_${i}_A_restored`);
             expect(Math.abs(a.scrollTop - aSavedTop)).toBeLessThan(30);
             await switchToSessionByIndex(page, 1);
-            const b = await scrollGeometry(page);
             await shot(page, testInfo, `bounce_${i}_B_default_latest_at_top`);
             // B was never scrolled — should always show latest at top.
             await assertLatestCellAtTop(page);
