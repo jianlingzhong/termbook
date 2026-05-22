@@ -47,3 +47,5 @@ See [`docs/known-issues.md`](docs/known-issues.md). Notably:
   navigation.
 - The SSH integration's salted shell snippet is plaintext in the
   remote shell's environment — same threat model as the local salt.
+
+<!-- CI verification PR; no actual changes -->
