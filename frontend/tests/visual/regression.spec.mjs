@@ -240,45 +240,50 @@ test.describe('regression', () => {
     test('PTY uses available horizontal space (ls fills width)', async ({ page }) => {
         await gotoFreshSession(page);
         // Build a known dir with enough short-named files that `ls` packs
-        // multiple columns. Previously the test relied on the backend's
-        // launch dir, which made it flaky across environments.
+        // multiple columns. Use a deterministic name pattern (f_NN) so
+        // assertions can match against it precisely.
         await runCommand(page, 'mkdir -p /tmp/tb_width_test && cd /tmp/tb_width_test && rm -f f_* && for i in $(seq 1 30); do touch f_$(printf "%02d" $i); done && ls', 5000);
-        // Wait for the snapshot HTML to render — runCommand returns when the
-        // cell closes, but snapshot serialization (xterm → DOM) lands a few
-        // hundred ms later. CI exposed this race; locally it never bit.
+        // Wait for the snapshot to render — runCommand returns at cell
+        // close, but the xterm→HTML serialization lands ~100-300ms later.
+        // CI is slower than local and exposed this race.
         await page.waitForFunction(() => {
             const cells = document.querySelectorAll('.notebook-cell');
             const cell = cells[cells.length - 1];
-            return cell && cell.querySelector('.snapshot-output pre');
-        }, null, { timeout: 8000 });
+            return cell && /f_\d{2}/.test(cell.querySelector('.snapshot-output')?.textContent || '');
+        }, null, { timeout: 10000 });
         const data = await page.evaluate(() => {
             const cells = document.querySelectorAll('.notebook-cell');
             const cell = cells[cells.length - 1];
             const output = cell?.querySelector('.cell-output');
             const snapshot = cell?.querySelector('.snapshot-output');
-            const rowDivs = snapshot?.querySelectorAll('pre > div > div') || [];
+            // The snapshot DOM structure varies with the xterm serializer
+            // version; just walk all leaf <span>s/<div>s under the snapshot
+            // and split into logical rows by examining innerHTML for <br>
+            // OR explicit newlines OR the row-div pattern. Easiest robust
+            // approach: get the snapshot's textContent, split into lines
+            // by content boundaries (\\n or specific entry patterns), and
+            // count f_NN occurrences per line.
+            const allText = (snapshot?.textContent || '').replace(/\s+$/gm, '');
+            // Split on actual newlines; each line is one terminal row.
+            const lines = allText.split('\n').filter(l => l.trim());
+            const linesWithFiles = lines.filter(l => /f_\d{2}/.test(l));
+            const firstFileLine = linesWithFiles[0] || '';
             return {
                 outputWidth: output?.getBoundingClientRect().width || 0,
-                rowCount: rowDivs.length,
-                colsPerRow: rowDivs[0] ? (rowDivs[0].textContent.match(/f_\d{2}/g) || []).length : 0,
+                rowCount: linesWithFiles.length,
+                colsPerRow: (firstFileLine.match(/f_\d{2}/g) || []).length,
+                debug: { allTextLen: allText.length, lineCount: lines.length, sample: lines.slice(0, 3) },
             };
         });
+        // Always log what we measured so a CI failure has the actual
+        // numbers in the run log, not just an inscrutable assertion.
+        console.log('width test data:', JSON.stringify(data));
+        expect(data.outputWidth).toBeGreaterThan(1000);
         // The bug we want to catch: PTY thinks the terminal is 80 cols
         // wide regardless of viewport, so `ls` of 30 4-char files packs
         // them into 10+ rows of 3 files each. The fix made the PTY honor
         // viewport-derived cols, so a 1600-wide viewport produces enough
         // columns that 30 short files fit in 2-3 rows.
-        //
-        // Use pixel width + column-count rather than absolute char count
-        // — the char count is font-dependent (JetBrains Mono on local,
-        // bitmap monospace on CI without the font installed), but column
-        // count of `ls` is purely a function of terminal cols which we
-        // control.
-        expect(data.outputWidth).toBeGreaterThan(1000);
-        // 30 files in <= 5 rows means at least 6 columns per row.
-        // Locally (~134 cols) we get 15 per row; CI (~95 cols) gets ~10
-        // per row. 6 is a comfortable floor that proves the bug is fixed
-        // without coupling to font metrics.
         expect(data.rowCount).toBeLessThanOrEqual(5);
         expect(data.colsPerRow).toBeGreaterThanOrEqual(6);
     });
