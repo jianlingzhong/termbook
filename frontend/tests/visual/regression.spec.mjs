@@ -62,18 +62,30 @@ test.describe('regression', () => {
         await inp.fill('vim /tmp/_regress_vim.txt');
         await inp.press('Enter');
 
-        // Wait for the modal to appear (TUI promotion fires on
-        // \x1b[?1049h from vim) AND for xterm to render at least one
-        // tilde row. The fixed 3s wait we used before was tight enough
-        // on slow CI hardware that xterm's DOM renderer hadn't painted
-        // the tildes yet when innerText was queried.
+        // Wait for the modal to appear — vim emits \x1b[?1049h, which
+        // triggers Termbook's TUI promotion.
         await page.waitForSelector('.tui-modal-overlay', { timeout: 8000 });
-        const modalText = await page.waitForFunction(() => {
-            const m = document.querySelector('.tui-terminal-container');
-            const t = m ? m.innerText : '';
-            return t.includes('~') ? t : null;
+
+        // Verify vim actually rendered something in the modal. We can't
+        // use the DOM (\`m.innerText\`) because xterm.js's renderer choice
+        // (DOM vs canvas vs WebGL) varies by environment — locally on
+        // macOS we get the DOM renderer (text in DOM); on Ubuntu CI's
+        // chromium with software WebGL we get the canvas renderer (text
+        // painted to canvas, innerText empty even though tildes are
+        // visible). Instead, read xterm's internal buffer via the
+        // \`window.__ACTIVE_TERM\` reference TuiModal.jsx exposes
+        // exactly for testing purposes.
+        const bufferText = await page.waitForFunction(() => {
+            const term = window.__ACTIVE_TERM;
+            if (!term) return null;
+            const buf = term.buffer.active;
+            let text = '';
+            for (let y = 0; y < Math.min(buf.length, term.rows); y++) {
+                text += buf.getLine(y)?.translateToString(true) + '\n';
+            }
+            return text.includes('~') ? text : null;
         }, null, { timeout: 8000 }).then(h => h.jsonValue());
-        expect(modalText, 'vim tildes should be visible in TUI modal').toContain('~');
+        expect(bufferText, 'vim tildes should be visible in TUI modal').toContain('~');
 
         await page.keyboard.press('Escape');
         await page.waitForTimeout(200);
