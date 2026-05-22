@@ -32,6 +32,13 @@ test.use({ viewport: VIEWPORT });
 
 const SSH_HOST = '127.0.0.1';
 const SSH_PORT = 2222;
+// Some dev environments shadow `ssh` with a wrapper that requires
+// hardware key taps (e.g. corp-managed `gnubby-ssh` in /usr/local/bin/ssh).
+// In those environments the 2nd, 3rd, ... ssh in the same test run hang
+// waiting for a tap that never comes. The test SUT works fine with any
+// ssh client, so just invoke the real Apple ssh directly to keep CI
+// deterministic. Override with TERMBOOK_E2E_SSH_BIN if needed.
+const SSH_BIN = process.env.TERMBOOK_E2E_SSH_BIN || '/usr/bin/ssh';
 
 // Helper: submit a command and wait for the ssh session to become active.
 // In Path B, the outer ssh cell closes when injection succeeds. So "ready"
@@ -39,12 +46,15 @@ const SSH_PORT = 2222;
 //        (b) input is back to non-passthrough (or the SSH-active idle).
 async function loginSsh(page, extraArgs = '') {
     const inp = await waitInputReady(page);
-    await inp.fill(`ssh -p ${SSH_PORT} ${extraArgs} ${SSH_HOST}`);
+    await inp.fill(`${SSH_BIN} -p ${SSH_PORT} ${extraArgs} ${SSH_HOST}`);
     await inp.press('Enter');
     // Wait for sshState to reach 'active' — observable as the outer cell
-    // closing with usedSshSession placeholder. Max ~6s (injection delay +
-    // idle window + bootstrap roundtrip).
-    const deadline = Date.now() + 10000;
+    // closing with usedSshSession placeholder. Typical end-to-end time
+    // is ~2.5s (idle window + inject + roundtrip), but the backend's
+    // SSH_INJECT_TIMEOUT fallback waits 12s before forcing the transition,
+    // and a cold sshd can occasionally need that fallback. 18s gives us
+    // headroom over the fallback so neither path drops the test.
+    const deadline = Date.now() + 18000;
     while (Date.now() < deadline) {
         const cells = await page.evaluate(() => Array.from(document.querySelectorAll('.notebook-cell')).map(c => ({
             cmd: c.querySelector('.read-only-command')?.textContent || null,
@@ -52,7 +62,8 @@ async function loginSsh(page, extraArgs = '') {
             hasSshChip: !!c.querySelector('.cell-env-chip-ssh'),
             usedSshSession: !!c.querySelector('.tui-completed-placeholder'),
         })));
-        const outer = cells.find(c => (c.cmd || '').startsWith('ssh '));
+        // Match both bare `ssh ...` and absolute-path forms like `/usr/bin/ssh ...`.
+        const outer = cells.find(c => /(^|\/)ssh(\s|$)/.test(c.cmd || ''));
         if (outer && !outer.isRunning && outer.usedSshSession) return;
         await page.waitForTimeout(200);
     }
@@ -232,7 +243,7 @@ test.describe('SSH session — Path B by default', () => {
     test('G: --no-termbook opts out: no SSH chip, falls back to Path A behavior', async ({ page }, testInfo) => {
         await gotoFreshSession(page);
         const inp = await waitInputReady(page);
-        await inp.fill(`ssh --no-termbook -p ${SSH_PORT} ${SSH_HOST}`);
+        await inp.fill(`${SSH_BIN} --no-termbook -p ${SSH_PORT} ${SSH_HOST}`);
         await inp.press('Enter');
         // Should engage passthrough (the entire ssh session is one cell).
         await waitForPassthrough(page, 8000);
@@ -252,7 +263,7 @@ test.describe('SSH session — Path B by default', () => {
 
     test('H: single-shot ssh (with trailing remote cmd) is treated as plain one-shot', async ({ page }, testInfo) => {
         await gotoFreshSession(page);
-        await runCommand(page, `ssh -p ${SSH_PORT} ${SSH_HOST} 'echo ONE_SHOT_OK'`);
+        await runCommand(page, `${SSH_BIN} -p ${SSH_PORT} ${SSH_HOST} 'echo ONE_SHOT_OK'`);
         await shot(page, testInfo, '01_oneshot');
         const cells = await inspectCells(page);
         const last = cells[cells.length - 1];
@@ -268,7 +279,7 @@ test.describe('SSH session — Path B by default', () => {
         await loginSsh(page);
         // Inner ssh — back to ourselves (single-shot to test, since nested
         // interactive inner injection is intentionally not supported in v1).
-        await runRemote(page, `ssh -p ${SSH_PORT} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SSH_HOST} 'echo NESTED_OK'`);
+        await runRemote(page, `${SSH_BIN} -p ${SSH_PORT} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SSH_HOST} 'echo NESTED_OK'`);
         await shot(page, testInfo, '01_after_nested');
         const cells = await inspectCells(page);
         const nestedCell = cells[cells.length - 1];
@@ -420,7 +431,12 @@ test.describe('SSH session — Path B by default', () => {
         const c2 = await inspectCells(page);
         const lastSsh = c2.filter(x => x.sshChip).slice(-1)[0];
         // After 2nd loginSsh, at least the new ssh cell is closed-as-active
-        // and we're in Path B again.
+        // and we're in Path B again. The `.pwd-prompt-prefix-ssh` element
+        // is driven by the `ssh_state` WS message, which races against the
+        // outer cell's close render. loginSsh returns as soon as the cell
+        // is rendered closed, so the prefix may still be a tick behind —
+        // wait for it explicitly.
+        await page.waitForSelector('.pwd-prompt-prefix-ssh', { timeout: 5000 });
         const after2nd = await page.evaluate(() => ({
             sshChip: !!document.querySelector('.pwd-prompt-prefix-ssh'),
         }));
