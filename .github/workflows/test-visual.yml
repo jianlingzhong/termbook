@@ -11,6 +11,11 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only token. The workflow only reads source, runs tests, and uploads
+# its own artifacts (which is allowed under contents:read).
+permissions:
+  contents: read
+
 # Cancel in-flight runs on the same branch if a new push comes in — saves CI
 # minutes and prevents stale results from "winning".
 concurrency:

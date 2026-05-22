@@ -12,6 +12,13 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only token. The workflow uploads its own artifacts (allowed under
+# contents:read) but doesn't touch issues, PRs, or any other API.
+# Notably: we use `pull_request` (not `pull_request_target`), so fork PRs
+# run WITHOUT access to repository secrets — safe for untrusted code.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
