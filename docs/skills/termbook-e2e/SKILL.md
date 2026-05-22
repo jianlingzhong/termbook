@@ -58,7 +58,7 @@ frontend/
 │   ├── 05_motion_stability.spec.mjs   ← flash detection via sampling
 │   ├── 06_visual_snapshots.spec.mjs   ← pixel-diff goldens
 │   ├── 07_scroll_behavior.spec.mjs    ← scroll matrix (19 tests)
-│   ├── 08_ssh_session.spec.mjs        ← SSH Path B (16 tests)
+│   ├── 08_ssh_session.spec.mjs        ← SSH integration (16 tests)
 │   ├── ssh-global-setup.mjs           ← userspace sshd spinup
 │   └── ssh-global-teardown.mjs
 └── test-results/                      ← per-run output (screenshots, video, trace)
@@ -329,7 +329,7 @@ fake test coverage.
 | Interactive command behavior (passthrough) | `tests/e2e/02_interactive_commands.spec.mjs` |
 | TUI (alt-screen) behavior | `tests/e2e/03_alt_screen_tui.spec.mjs` |
 | Backend persistence | `tests/e2e/04_persistence.spec.mjs` |
-| SSH Path B behavior | `tests/e2e/08_ssh_session.spec.mjs` |
+| SSH integration behavior | `tests/e2e/08_ssh_session.spec.mjs` |
 
 When in doubt: extend an existing spec rather than create a new one.
 

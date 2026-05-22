@@ -1,9 +1,7 @@
 # Contributing to Termbook
 
 Termbook is a self-hosted notebook-style web terminal. Bug reports,
-small fixes, and focused feature PRs are welcome. The project is in
-**maintenance mode** (see [README — Status](README.md#status)) — large
-new features are unlikely to be merged.
+small fixes, and feature PRs are welcome.
 
 ## Before opening an issue
 
@@ -11,8 +9,7 @@ new features are unlikely to be merged.
    in [`docs/known-issues.md`](docs/known-issues.md).
 2. **Reproduce locally** — Termbook is browser+Node, so behavior can
    depend on your shell config (zsh customizations especially affect
-   the SSH "Path B" integration). Try with `bash -i` for a clean
-   repro.
+   the SSH integration). Try with `bash -i` for a clean repro.
 3. **Read [AGENTS.md](AGENTS.md)** — it explains how the project is
    organized and where to look for things. It's targeted at AI coding
    agents but is the best onboarding doc for humans too.

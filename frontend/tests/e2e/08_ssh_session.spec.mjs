@@ -1,4 +1,4 @@
-// E2E: SSH session — Path B (default).
+// E2E: SSH integration (the default ssh-aware mode).
 //
 // Termbook automatically injects a salted shell-integration into the remote
 // shell when the user runs an interactive `ssh user@host`. From that point
@@ -72,7 +72,7 @@ async function loginSsh(page, extraArgs = '') {
         if (outer && !outer.isRunning && outer.usedSshSession) return;
         await page.waitForTimeout(200);
     }
-    throw new Error('SSH never reached active Path B state within 10s');
+    throw new Error('SSH integration never reached the active state within 18s');
 }
 
 // Submit a command WHILE the SSH session is active (will become a remote cell).
@@ -112,7 +112,7 @@ async function inspectCells(page) {
     });
 }
 
-test.describe('SSH session — Path B by default', () => {
+test.describe('SSH integration (default)', () => {
 
     test('A: happy path: ssh, run remote commands, each is its own cell with SSH chip', async ({ page }, testInfo) => {
         await gotoFreshSession(page);
@@ -248,7 +248,7 @@ test.describe('SSH session — Path B by default', () => {
         expect(post.output).toContain('POST_VIM_OK');
     });
 
-    test('G: --no-termbook opts out: no SSH chip, falls back to Path A behavior', async ({ page }, testInfo) => {
+    test('G: --no-termbook opts out: no SSH chip, whole session is one passthrough cell', async ({ page }, testInfo) => {
         await gotoFreshSession(page);
         const inp = await waitInputReady(page);
         await inp.fill(`${SSH_BIN} --no-termbook -p ${SSH_PORT} ${SSH_HOST}`);
@@ -282,7 +282,7 @@ test.describe('SSH session — Path B by default', () => {
         expect(last.usedSshSession).toBe(false);
     });
 
-    test('I: nested ssh: outer Path B holds, inner exits cleanly back to outer', async ({ page }, testInfo) => {
+    test('I: nested ssh: outer integration holds, inner exits cleanly back to outer', async ({ page }, testInfo) => {
         await gotoFreshSession(page);
         await loginSsh(page);
         // Inner ssh — back to ourselves (single-shot to test, since nested

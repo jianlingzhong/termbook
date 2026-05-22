@@ -181,7 +181,7 @@ bypass the keystroke forwarding).
 This is also what makes `cat` (no args) usable: type lines, press Ctrl+D
 to send EOF, cat exits cleanly.
 
-## SSH integration ("Path B by default")
+## SSH integration
 
 When the user runs `ssh user@host` (interactive, not single-shot, not
 `--no-termbook`), Termbook lets SSH connect normally, then once the
@@ -209,21 +209,22 @@ server whether the close was for the local shell (outer ssh exiting) or
 the remote shell (a remote command finishing).
 
 While `sshActive`, the parser is invoked with `allowUnsalted: false` —
-this is what makes Path B safe: a malicious or buggy remote command
-emitting an unsalted `\033]133;D;0\007` cannot close cells.
+this is what makes the integration safe: a malicious or buggy remote
+command emitting an unsalted `\033]133;D;0\007` cannot close cells.
 
 Each remote-issued cell carries `remoteHost` so the frontend renders an
 orange `🔌 user@host` chip in `cell-header-right`, distinct from the
 cyan pwd-breadcrumb and purple git chip.
 
 Opt-out per command: `ssh --no-termbook host` (or `--no-tb`) keeps the
-cell in Path A mode (one big cell, full passthrough). Single-shot
-`ssh host 'cmd'` is detected and never injected. Nested ssh: only the
-outermost gets integration; inner is treated as a normal remote command.
+whole SSH session as one passthrough cell. Single-shot `ssh host 'cmd'`
+is detected and never injected. Nested ssh: only the outermost gets
+integration; inner is treated as a normal remote command.
 
-If injection doesn't produce a salted marker within 8 s
-(non-bash/zsh remote shell, output suppressed, etc.), `sshState='failed'`
-and Termbook degrades to today's "leaky Path B" behavior automatically.
+If injection doesn't produce a salted marker within 8 s (non-bash/zsh
+remote shell, output suppressed, etc.), `sshState='failed'` and Termbook
+degrades automatically to the pre-integration behavior (one big SSH
+cell, unsalted remote markers may close cells).
 
 **Remote Tab completion**: chat input's Tab routes through the remote
 shell via a salted PTY-RPC (the `__tb_complete` function installed by
@@ -234,7 +235,8 @@ or falls back to the local completion module. Completion candidates
 reach the user normally; the user is unaware whether the source was
 local or remote.
 
-**Control-key forwarding** when chat input is idle in Path B:
+**Control-key forwarding** when chat input is idle inside an active
+SSH session:
 - Ctrl+D at empty input → `\x04` to remote PTY → remote bash EOFs → ssh
   exits → session ends (matches every-terminal-ever expectation).
 - Ctrl+C with content → `\x03` to remote PTY + clear chat input locally

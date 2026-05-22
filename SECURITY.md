@@ -36,8 +36,8 @@ Since the model is "your machine, your browser, your shell," these
 are the security-relevant invariants Termbook tries to maintain:
 
 1. **Salted OSC 133 markers** prevent untrusted command output (or
-   remote shells in SSH "Path B" mode) from forging cell-close events
-   that could surface false success/failure. See
+   remote shells when the SSH integration is active) from forging
+   cell-close events that could surface false success/failure. See
    [`docs/decisions.md#salted-marker`](docs/decisions.md#salted-marker)
    for the threat reasoning.
 

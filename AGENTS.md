@@ -18,10 +18,10 @@ to do, what not to do, where the traps are, and what "done" looks like.
 3. The test suites that matter are:
    - `frontend/tests/visual/*.spec.mjs` (40 tests) — fast functional +
      motion regressions. Run with `npm run test:visual` (~3 min).
-   - `frontend/tests/e2e/*.spec.mjs` (61 tests, including 16 SSH Path B
-     tests) — full human-workflow E2E with screenshots, video, pixel
-     goldens. Run with `npm run test:e2e` (~6 min). The SSH suite needs
-     a userspace sshd on 127.0.0.1:2222 —
+   - `frontend/tests/e2e/*.spec.mjs` (61 tests, including 16 SSH
+     integration tests) — full human-workflow E2E with screenshots,
+     video, pixel goldens. Run with `npm run test:e2e` (~6 min). The
+     SSH suite needs a userspace sshd on 127.0.0.1:2222 —
      `tests/e2e/ssh-global-setup.mjs` spins it up on first run and
      reuses it on subsequent runs.
    - `npm run test:all` runs both.
@@ -66,7 +66,7 @@ termbook/
 │   ├── persistence.js                ← SQLite layer (~150 lines)
 │   ├── completion.js                 ← Tab completion (~140 lines)
 │   ├── env_detect.js                 ← git branch detection (~80 lines)
-│   ├── ssh.js                        ← SSH Path B parser + bootstrap (~310 lines)
+│   ├── ssh.js                        ← SSH-integration parser + bootstrap (~310 lines)
 │   └── package.json
 ├── frontend/                       ← React 19 + Vite + xterm.js
 │   ├── src/
@@ -88,7 +88,7 @@ termbook/
 │   │   ├── 05_motion_stability.spec.mjs    ← flash sampling
 │   │   ├── 06_visual_snapshots.spec.mjs    ← pixel goldens
 │   │   ├── 07_scroll_behavior.spec.mjs     ← 19-test scroll matrix
-│   │   ├── 08_ssh_session.spec.mjs         ← SSH Path B (16 tests)
+│   │   ├── 08_ssh_session.spec.mjs         ← SSH integration (16 tests)
 │   │   ├── ssh-global-setup.mjs            ← userspace sshd spinup
 │   │   ├── ssh-global-teardown.mjs
 │   │   ├── 06_*-snapshots/                 ← golden PNGs (committed)
@@ -269,8 +269,8 @@ regenerated PNG before committing.
 | TUI modal opens blank | Likely the `activeCellId` vs `cellId` field mismatch on `tui_enter`. Frontend reads `msg.activeCellId ?? msg.cellId` for safety. |
 | Cell flashes a 480px black box | The live-cell sizing fell back to fixed-height. See `NotebookCell.jsx` `cell-output` style branch. Live cells should size by `liveContentRows`, snapshots by `displaySnapshot` rendering. |
 | User's `ll` alias doesn't work | `backend/server.js` `extractUserAliases()` parses `~/.bashrc`, `~/.zshrc`, `~/.aliases` etc. on backend startup. If it didn't get parsed, check the file is readable. |
-| Powerlevel10k prompt leaks into cells | `backend/parser.js` accepts unsalted `133;D` markers ONLY when SSH is not active (the `allowUnsalted` flag in the parser call site). During an active Path B SSH session, only salted markers are accepted — this is intentional so remote shells with their own OSC 133 integration (p10k, atuin) can't spoof cell closes. The pwd marker must accept both `\x07` and `\x1b\\` terminators. |
-| SSH cell never reaches Path B "active" state | `ssr_debug.log` will show `SSH_INJECT` then `SSH_INJECT_TIMEOUT` after 12s. Likely the remote shell isn't bash/zsh OR has output suppression that swallowed the salted marker. Fallback: `sshState='failed'` and the session degrades to "leaky Path B". Check `backend/ssh.js:buildRemoteIntegration` and verify the snippet runs cleanly in the remote shell by `echo "<snippet>" \| ssh host bash -s`. |
+| Powerlevel10k prompt leaks into cells | `backend/parser.js` accepts unsalted `133;D` markers ONLY when the SSH integration is not active (the `allowUnsalted` flag in the parser call site). During an active SSH-integration session, only salted markers are accepted — this is intentional so remote shells with their own OSC 133 integration (p10k, atuin) can't spoof cell closes. The pwd marker must accept both `\x07` and `\x1b\\` terminators. |
+| SSH cell never reaches the active state | `ssr_debug.log` will show `SSH_INJECT` then `SSH_INJECT_TIMEOUT` after 12s. Likely the remote shell isn't bash/zsh OR has output suppression that swallowed the salted marker. Fallback: `sshState='failed'` and the session degrades to the pre-integration behavior (one big cell, unsalted remote markers may close cells). Check `backend/ssh.js:buildRemoteIntegration` and verify the snippet runs cleanly in the remote shell by `echo "<snippet>" \| ssh host bash -s`. |
 | Ctrl+D in SSH does nothing visible | Don't send `\x04` directly — many remote shells (zsh with vi-mode) bind `^D` to `list-choices`, not EOF. The handler in `frontend/src/App.jsx` synthesizes a real `exit` cell submission instead, which (a) gives visible feedback and (b) runs through the normal cell lifecycle that correctly clears SSH state. Raw `{type:'input', data:'exit\r'}` over WS doesn't work — bytes reach the PTY but the remote shell doesn't process them. The cell-submit path always works. |
 | `nvim file.txt` renders inline with broken layout, status line orphaned, file content cut off | Modern neovim doesn't emit `\x1b[?1049h` (alt-screen enter) in many configurations (notably NvChad). The fallback is content-based detection in `backend/server.js` `onData` — watching for a combination of strong "fullscreen TUI" signals (mouse mode enable, cursor hide + bracketed paste, 5+ absolute cursor positions). When at least two strong signals appear, we promote to the TUI modal. `cat`/`echo`/`ls` don't trigger this; nvim/vim/htop/less do. **Don't** add a curated name-based list — a real terminal doesn't decide based on the app's name. |
 | TUI app draws at wrong size, half empty space below content / status line in the middle / file content cut off | Modal opened but PTY size doesn't match modal terminal size. Check `calculateMinSize` in `backend/server.js` — when `session.isTuiActive`, it must use MAX of `tuiCols`/`tuiRows` from clients (modal size), not MIN of `requestedCols`/`requestedRows` (which would shrink to the inline cell's size). Frontend's `requestResize(cols, rows, isTui)` must pass `isTui: true` for the TuiModal. |

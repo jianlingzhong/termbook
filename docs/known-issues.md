@@ -151,30 +151,30 @@ appears for a while, then a burst.
 WebSocket traffic per cell and the SIGWINCH-storm prevention work is
 delicate. Not worth touching without a real complaint.
 
-### SSH Path B: cosmetic prompt residue in remote cell snapshots
+### SSH: cosmetic prompt residue in remote cell snapshots
 
-When Path B is active, each remote-issued cell's snapshot tail often
-contains an extra line or two of the remote shell's prompt re-rendering
-(e.g. p10k's right-side prompt drawing). The cell's exit code, pwd, and
-git chip are all correct; this is purely visual noise at the bottom of
-the snapshot.
+When the SSH integration is active, each remote-issued cell's snapshot
+tail often contains an extra line or two of the remote shell's prompt
+re-rendering (e.g. p10k's right-side prompt drawing). The cell's exit
+code, pwd, and git chip are all correct; this is purely visual noise
+at the bottom of the snapshot.
 
-**Cause**: `__tb_remote_prompt` runs as `precmd` / `PROMPT_COMMAND`
-BEFORE the next prompt prints, but the remote shell typically also has
-its own prompt-drawing logic that writes a line of output. The
-snapshot is captured at the next salted finish marker, which includes
-any output the remote shell wrote between the previous command and the
-marker.
+**Cause**: the remote prompt hook runs BEFORE the next prompt prints,
+but the remote shell typically also has its own prompt-drawing logic
+that writes a line of output. The snapshot is captured at the next
+salted finish marker, which includes any output the remote shell wrote
+between the previous command and the marker.
 
 **Not fixed because**: stripping prompt artifacts heuristically risks
-chopping legitimate trailing output. Cosmetic; ignored for v1.
+chopping legitimate trailing output. Cosmetic only.
 
-### SSH Path B: per-SSH salt is plaintext on the remote
+### SSH: integration salt is plaintext on the remote
 
-The `sshSalt` is injected into the remote shell's environment as part
-of PROMPT_COMMAND. Any process on the remote that can read the shell's
-environment (e.g. `cat /proc/$$/environ` on Linux, or `ps eww` viewing
-your own process env) can read the salt and forge cell-close markers.
+The per-SSH salt is injected into the remote shell's environment as
+part of `PROMPT_COMMAND`. Any process on the remote that can read the
+shell's environment (e.g. `cat /proc/$$/environ` on Linux, or
+`ps eww` viewing your own process env) can read the salt and forge
+cell-close markers.
 
 **Threat model**: Termbook targets local / dev / self-owned hosts. If
 you SSH into a truly untrusted shared host, use `ssh --no-termbook` to
@@ -184,7 +184,7 @@ disable the integration.
 of your local bash; any local process can read it. Documented for
 completeness.
 
-### SSH Path B: nested SSH only injects on the outermost
+### SSH: nested SSH only injects on the outermost connection
 
 `ssh host1`, then on host1 `ssh host2` — only host1 gets the salted
 integration. The inner ssh is treated as a normal remote command from
@@ -192,20 +192,19 @@ Termbook's POV. Inner commands run inside one wrap-cell with no
 per-command boundaries.
 
 **Could be fixed** by detecting `ssh` commands typed INSIDE an active
-Path B session and re-running the inject machinery for the inner
-shell. Punted for v1; not a common-enough workflow to justify the
-state-machine complexity.
+SSH session and re-running the inject machinery for the inner shell.
+Not done because nested-interactive-ssh isn't a common workflow.
 
-### SSH Path B: integration fails silently after 12 seconds
+### SSH: integration fails silently after 12 seconds
 
 If the remote shell isn't bash or zsh, or has output suppression that
 swallows the salted printf, the inject won't yield a salted marker.
-`SSH_INJECT_TIMEOUT` fires and `sshState='failed'`. The session
-degrades to the pre-feature behavior (one big cell, unsalted markers
-from remote may close cells). No user-visible error.
+The 12-second injection-timeout fires, and the session degrades to
+the pre-integration behavior (one big cell, unsalted markers from
+remote may close cells). No user-visible error.
 
 **Should** surface this as a small UI indicator (e.g. "integration
-off" chip with a tooltip explaining how to retry). Not done in v1.
+off" chip with a tooltip explaining how to retry). Not done yet.
 
 ### No mobile layout
 

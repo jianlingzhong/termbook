@@ -240,7 +240,7 @@ backend/server.js
 ├── ws.on('message')                 WebSocket message handler
 
 backend/ssh.js
-├── parseSshCommand()                Path B opt-in detection
+├── parseSshCommand()                SSH-integration opt-in detection
 ├── buildRemoteIntegration()         injected snippet for remote shell
 
 backend/parser.js

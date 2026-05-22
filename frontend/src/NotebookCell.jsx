@@ -393,6 +393,13 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
         </div>
         {renderedSnapshot && overflowing && !expanded && (
           <div className="cell-overflow-hint" onClick={() => setExpanded(true)}>
+            {/* Reading outputRef.current during render is technically a
+                React anti-pattern (lint: react-hooks/refs) — we lint-ignore
+                because the value is purely a cosmetic line-count hint.
+                If the DOM measurement is briefly stale (e.g. before the
+                snapshot fully paints) the displayed count is off by a
+                few; corrected on the next render. No functional impact. */}
+            {/* eslint-disable-next-line react-hooks/refs */}
             <span>Show all ({Math.ceil((outputRef.current?.scrollHeight || 0) / 22)} lines)</span>
           </div>
         )}

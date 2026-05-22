@@ -4,7 +4,6 @@
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-101%20passing-brightgreen.svg)](frontend/tests/)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-blue.svg)](backend/package.json)
-[![Status: feature-complete](https://img.shields.io/badge/status-feature--complete-success.svg)](#status)
 
 Termbook is a self-hosted, browser-based terminal that turns every shell
 command into a notebook cell — like Jupyter, but for bash, zsh, and remote
@@ -110,7 +109,7 @@ cd frontend
 npm run test:visual         # 40 functional + motion regression tests (~3 min)
 npm run test:e2e            # 60 end-to-end human-workflow tests with
                             # screenshots + screencasts + pixel goldens
-                            # (includes 16 SSH Path B tests that spin up
+                            # (includes 16 SSH integration tests that spin up
                             # a userspace sshd on 127.0.0.1:2222) (~6 min)
 npm run test:all            # both, in sequence
 npm run test:e2e:update     # regenerate golden screenshots
@@ -130,7 +129,7 @@ for layout and conventions.
   this repo. The most thorough onboarding doc; **start here** even if
   you're a human.
 - [docs/architecture.md](docs/architecture.md) — how it actually works
-  today (data flow, state machines, SSH Path B, TUI lifecycle).
+  today (data flow, state machines, SSH integration, TUI lifecycle).
 - [docs/decisions.md](docs/decisions.md) — every shipped fix with rationale
   and `file:line` references. The "why" of the codebase.
 - [docs/development.md](docs/development.md) — dev loop, debugging
@@ -145,19 +144,14 @@ for layout and conventions.
 - [SECURITY.md](SECURITY.md) — threat model and reporting policy.
 - [CHANGELOG.md](CHANGELOG.md) — release notes.
 
-## Status
+## Alternatives
 
-Termbook is **v1.0** — feature-complete and in **maintenance mode**.
-Bug fixes are welcome via PR (see [CONTRIBUTING.md](CONTRIBUTING.md));
-large new features are unlikely to be merged.
-
-If you're looking for a more actively developed terminal-with-AI or
-terminal-with-blocks, consider [Warp](https://www.warp.dev/) (Mac,
-commercial), [Wave Terminal](https://www.waveterm.dev/) (cross-platform,
-open source), or your editor's built-in terminal (Cursor, Zed, etc.).
+Other terminals in this space:
+[Warp](https://www.warp.dev/) (Mac, commercial, AI-integrated),
+[Wave Terminal](https://www.waveterm.dev/) (cross-platform, open source,
+blocks UI), or your editor's built-in terminal (Cursor, Zed, etc.).
 Termbook fills a different niche: a self-hosted, browser-based,
-SSH-with-cell-semantics notebook that runs anywhere a browser can
-reach.
+SSH-aware notebook that runs anywhere a browser can reach.
 
 ## License
 
