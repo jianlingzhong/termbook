@@ -1,11 +1,11 @@
 {
-  "name": "termbook-root",
+  "name": "termbook",
   "version": "1.0.0",
+  "description": "Notebook-style web terminal — each shell command becomes a cell with status, output, exit code, and history. SSH-aware. Localhost-only.",
   "private": true,
+  "author": "Jianling Zhong",
+  "license": "MIT",
   "scripts": {
     "test": "bash scripts/run_tests.sh"
-  },
-  "dependencies": {
-    "xterm-headless": "^5.3.0"
   }
 }
