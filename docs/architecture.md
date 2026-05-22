@@ -72,7 +72,7 @@ code obvious.
      - Broadcasts `new_cell` to all clients (so other tabs see it too)
      - Writes `pwd\r\n` to the PTY
      - Logs `[COMMAND_START]`
-4. **PTY** runs `pwd`, emits `/Users/.../termbook\r\n` on stdout.
+4. **PTY** runs `pwd`, emits `/path/to/cwd\r\n` on stdout.
 5. **Backend** (`ptyProcess.onData`) for every chunk:
    - Appends to `session.tailBuf`
    - Writes to `session.headlessTerminal` (shadow buffer)
@@ -85,7 +85,7 @@ code obvious.
      completion marker
 6. **Shell prompt fires**, emitting:
    ```
-   \x1b]133;D;0;<promptSalt>\x07\x1b]7;file://localhost/Users/.../termbook\x07
+   \x1b]133;D;0;<promptSalt>\x07\x1b]7;file://localhost/path/to/cwd\x07
    ```
    (set via `PROMPT_COMMAND` injected by our rcfile)
 7. **Parser** returns `{exitCode, pwd, before, firstIndex, matchEnd}`.
@@ -244,10 +244,12 @@ local or remote.
 Frontend tracks `sessionSshActive[id]` driven by `session_init.sshActive`
 on join and `'ssh_state'` WS messages on transitions.
 
-Tested by `frontend/tests/e2e/08_ssh_session.spec.mjs` (13 tests covering
-happy path, remote pwd/git/exit, vim TUI over SSH, --no-termbook opt-out,
-nested ssh, the security regression for unsalted-marker spoofing, remote
-Tab completion with cycling, and Ctrl+C / Ctrl+D forwarding).
+Tested by `frontend/tests/e2e/08_ssh_session.spec.mjs` (16 tests
+covering happy path, remote pwd/git/exit, vim TUI over SSH,
+--no-termbook opt-out, nested ssh, the security regression for
+unsalted-marker spoofing, remote Tab completion with cycling, Ctrl+C /
+Ctrl+D forwarding, the local prompt prefix showing actual hostname,
+and the input-prefix host badge + sidebar SSH indicator).
 
 ## Scroll behavior
 
@@ -580,10 +582,13 @@ The user pays a small cost (no zsh-specific functions) for big wins
 
 ## What's NOT here
 
-- No backend tests (the `backend/package.json` has Jest configured but no
-  actual test files). All testing is end-to-end via Playwright.
-- No backend logging beyond `ssr_debug.log` and stdout.
-- No queue/db/caching infrastructure.
-- No authentication. Anyone who reaches `:4001` gets a shell.
-- No TypeScript. Backend is plain CommonJS, frontend is JSX.
-- No build step for the backend. `node server.js` and you're running.
+- **No backend unit tests.** All testing is end-to-end via Playwright;
+  see [testing.md](testing.md).
+- **No backend logging** beyond `ssr_debug.log` and stdout.
+- **No queue/caching infrastructure** beyond the SQLite persistence
+  layer for sessions and cells.
+- **No authentication.** Anyone who reaches `:4001` gets a shell. See
+  [SECURITY.md](../SECURITY.md).
+- **No TypeScript.** Backend is plain CommonJS, frontend is JSX.
+- **No build step for the backend.** `node server.js` and it's
+  running.

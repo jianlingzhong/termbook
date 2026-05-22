@@ -147,18 +147,17 @@ for layout and conventions.
 
 ## Status
 
-Termbook is **v1.0** — feature-complete for the personal-tool use case
-the maintainer originally built it for. Active development has paused;
-bug fixes are welcome via PR (see [CONTRIBUTING.md](CONTRIBUTING.md)),
-but new features are not on the roadmap.
+Termbook is **v1.0** — feature-complete and in **maintenance mode**.
+Bug fixes are welcome via PR (see [CONTRIBUTING.md](CONTRIBUTING.md));
+large new features are unlikely to be merged.
 
 If you're looking for a more actively developed terminal-with-AI or
 terminal-with-blocks, consider [Warp](https://www.warp.dev/) (Mac,
 commercial), [Wave Terminal](https://www.waveterm.dev/) (cross-platform,
 open source), or your editor's built-in terminal (Cursor, Zed, etc.).
 Termbook fills a different niche: a self-hosted, browser-based,
-SSH-with-cell-semantics notebook that you can run anywhere a browser
-can reach.
+SSH-with-cell-semantics notebook that runs anywhere a browser can
+reach.
 
 ## License
 

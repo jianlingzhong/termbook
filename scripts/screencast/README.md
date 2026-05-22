@@ -37,21 +37,26 @@ Everything shown in the recording is safe for public consumption:
   with three fake commits, a tiny README, and a tiny python file.
   Set up fresh by `prep.sh`.
 - **The chat-input prompt hostname is overridden** to `localhost` via
-  Playwright's `page.route` mock of `/api/config`. The user's real
-  machine hostname (which Termbook normally shows) never appears.
-- **The top pwd-breadcrumb is hidden** via injected CSS so the backend's
-  launch directory (which would otherwise briefly show the user's home
-  path) is invisible.
-- **Per-cell pwd chips** containing `personal/` or `<USER>` are
-  also masked via a MutationObserver in the injected init script — a
-  defensive belt around the `cd /tmp/termbook-demo` early in the demo.
+  Playwright's `page.route` mock of `/api/config`. The recorder's
+  real machine hostname (which Termbook normally shows) never appears.
+- **The top pwd-breadcrumb is hidden** via injected CSS so the
+  backend's launch directory (which would otherwise briefly show the
+  recorder's home path) is invisible.
+- **Per-cell pwd chips** containing the current `$USER` name or
+  `/Users/<name>/` are masked via a MutationObserver in the injected
+  init script — a defensive belt around the `cd /tmp/termbook-demo`
+  early in the demo. The mask list is derived from the recorder's
+  environment at runtime.
 
-If you adapt this for your own fork, edit `record.mjs`:
+If you adapt this for your own fork:
 
-- Change the `addInitScript` masking rules to whatever paths/usernames
-  your filesystem might leak.
-- Change `body.localHostname = 'localhost'` to whatever you want shown.
-- Replace `/tmp/termbook-demo` with your own throwaway workspace.
+- The default mask list already uses `$USER` from your environment,
+  so paths like `/Users/yourname/...` get hidden automatically.
+- Set `TERMBOOK_DEMO_MASK="org-name,project-name"` (comma-separated)
+  to add more substrings to mask.
+- `body.localHostname = 'localhost'` in `record.mjs` controls the
+  hostname shown in the chat prompt.
+- Edit `prep.sh` if you want different demo content.
 
 ## Files
 

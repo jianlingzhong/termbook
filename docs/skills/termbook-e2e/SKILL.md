@@ -5,31 +5,33 @@ description: Drive Termbook end-to-end via Playwright — write E2E tests that c
 
 ## When to use
 
-Load this skill whenever you're working in this Termbook repo and need to:
-- Drive the running app to reproduce a user-reported bug
+Load this skill whenever you're working in the Termbook repo and need to:
+- Drive the running app to reproduce a reported bug
 - Write or extend a test that captures real human interaction
 - Verify a UI change pixel-by-pixel against a committed golden
 - Catch a transient flash / focus loss / scroll glitch via sampling
 - Promote a one-off Playwright driver script into a permanent test
 
-The rules below are mandatory. Skipping them produces the same anti-pattern
-the repo has 50+ abandoned spec files from (see [AGENTS.md anti-patterns](../../../AGENTS.md#anti-patterns-observed-in-this-repos-history)).
+The rules below are mandatory. Skipping them produces the kind of
+ad-hoc, never-promoted driver script that becomes a maintenance burden
+instead of a regression guard.
 
 ## Prerequisites
 
-1. **Both servers running**: `bash scripts/restart_servers.sh` from the repo root.
-   Frontend on `:4000`, backend on `:4001`. Verify with `lsof -ti:4000 -ti:4001`.
+1. **Both servers running**: `bash scripts/restart_servers.sh` from the
+   repo root. Frontend on `:4000`, backend on `:4001`. Verify with
+   `lsof -ti:4000 -ti:4001`.
 2. **Playwright installed in frontend**: it is, via `@playwright/test`.
    First run downloads browsers if missing.
-3. **Read [docs/testing.md](../../testing.md) first.** This skill assumes you've
-   skimmed it for helper APIs and tier definitions.
+3. **Read [docs/testing.md](../../testing.md) first.** This skill
+   assumes you've skimmed it for helper APIs and tier definitions.
 
 ## Core workflow
 
 When investigating any bug or shipping any feature:
 
 ```
-1. Reproduce live via a driver script (or jump straight to test #2)
+1. Reproduce live via a driver script (or jump straight to step 2)
 2. Write a Playwright spec under tests/e2e/<NN>_<area>.spec.mjs
 3. Run it: npm run test:e2e -- <area>
 4. Inspect the screenshots/video it produces
@@ -39,8 +41,8 @@ When investigating any bug or shipping any feature:
 8. Commit the spec ALONG WITH the fix
 ```
 
-Never delete the spec after step 7. It IS the test the next agent needs
-to prevent the regression.
+Never delete the spec after step 7. It IS the test the next agent
+needs to prevent the regression.
 
 ## File layout
 
@@ -55,7 +57,10 @@ frontend/
 │   ├── 04_persistence.spec.mjs        ← backend restart
 │   ├── 05_motion_stability.spec.mjs   ← flash detection via sampling
 │   ├── 06_visual_snapshots.spec.mjs   ← pixel-diff goldens
-│   └── 07_scroll_behavior.spec.mjs    ← scroll matrix (19 tests)
+│   ├── 07_scroll_behavior.spec.mjs    ← scroll matrix (19 tests)
+│   ├── 08_ssh_session.spec.mjs        ← SSH Path B (16 tests)
+│   ├── ssh-global-setup.mjs           ← userspace sshd spinup
+│   └── ssh-global-teardown.mjs
 └── test-results/                      ← per-run output (screenshots, video, trace)
 ```
 
@@ -235,9 +240,9 @@ If you wrote `_drive_xxx.mjs` while investigating:
 
 ## Common traps
 
-### Effect-of-React-rendering causes scroll/layout shifts
+### React rendering causes scroll/layout shifts
 
-The browser fires scroll events as React mounts cells. Our scroll
+The browser fires scroll events as React mounts cells. The scroll
 listener filters these out by checking if a user input event happened
 in the last 500ms. If you're writing a scroll-related test, use
 `userScrollUp/Down/To` from helpers — they precede the scroll with a
@@ -246,8 +251,8 @@ wheel event to mark it as user-initiated.
 ### `:last-of-type` picks the sentinel div, not the cell
 
 The notebook renders a 240px sentinel `<div>` after the cells. Use
-`page.locator('.notebook-cell').last()` or `querySelectorAll('.notebook-cell')`
-and index the last.
+`page.locator('.notebook-cell').last()` or
+`querySelectorAll('.notebook-cell')` and index the last.
 
 ### Sidebar order is chronological (newest last)
 
@@ -266,8 +271,18 @@ already do).
 ### Pixel goldens are platform-specific
 
 The filename suffix `-chromium-darwin.png` includes browser and OS.
-Goldens generated on macOS won't match on Linux. If we add CI, we'll
-need per-platform goldens (Playwright handles this automatically).
+Goldens generated on macOS won't match on Linux. CI would need
+per-platform goldens (Playwright handles this automatically).
+
+### SSH tests need the userspace sshd
+
+`tests/e2e/08_ssh_session.spec.mjs` connects to a userspace sshd at
+`127.0.0.1:2222` that `ssh-global-setup.mjs` spawns on first test
+run. The sshd is left running between runs for speed; override with
+`TERMBOOK_E2E_KILL_SSHD=1`. If your environment shadows `ssh` with a
+wrapper that requires hardware key taps (e.g. corp-managed
+gnubby-ssh), set `TERMBOOK_E2E_SSH_BIN=/usr/bin/ssh` (already the
+default in 08_ssh_session.spec.mjs).
 
 ## Verification recipe (proves your test catches the bug)
 
@@ -282,21 +297,21 @@ For any new motion or regression test:
 6. Run again                              → PASSES (now you trust it)
 ```
 
-A test that's never been seen to fail isn't actually a test — it might
-always pass regardless of code state. Skipping step 4 has produced fake
-test coverage in this repo's history.
+A test that's never been seen to fail isn't actually a test — it
+might always pass regardless of code state. Skipping step 4 produces
+fake test coverage.
 
 ## Anti-patterns (do NOT do)
 
 - **Deleting an E2E test as "ad-hoc debug script"**. Promote it.
-- **Adding `_drive_*.mjs` to the repo root or frontend/**. They get
+- **Adding `_drive_*.mjs` to the repo root or `frontend/`**. They get
   forgotten. Promote them to `tests/e2e/`.
 - **Using `page.waitForTimeout(N)` for synchronization**. Use the
   proper `waitFor*` helpers. Fixed timeouts hide races.
 - **Hardcoded scrollTop values**. Use relative assertions (`atTop`,
   `viewportTop < tolerance`).
-- **Mocking the backend in E2E tests**. These are E2E — they hit a real
-  backend, real PTY, real SQLite.
+- **Mocking the backend in E2E tests**. These are E2E — they hit a
+  real backend, real PTY, real SQLite.
 - **`querySelector('.notebook-cell:last-of-type')`**. Use
   `querySelectorAll('.notebook-cell')` and index.
 - **Skipping the verification recipe**. Tests that have never been
@@ -314,6 +329,7 @@ test coverage in this repo's history.
 | Interactive command behavior (passthrough) | `tests/e2e/02_interactive_commands.spec.mjs` |
 | TUI (alt-screen) behavior | `tests/e2e/03_alt_screen_tui.spec.mjs` |
 | Backend persistence | `tests/e2e/04_persistence.spec.mjs` |
+| SSH Path B behavior | `tests/e2e/08_ssh_session.spec.mjs` |
 
 When in doubt: extend an existing spec rather than create a new one.
 
@@ -321,10 +337,13 @@ When in doubt: extend an existing spec rather than create a new one.
 
 You've used this skill correctly if:
 1. You wrote a Playwright spec (NOT a `_drive_*.mjs` script).
-2. The spec uses helpers from `tests/e2e/helpers.mjs` (not raw `waitForTimeout`).
+2. The spec uses helpers from `tests/e2e/helpers.mjs` (not raw
+   `waitForTimeout`).
 3. The spec calls `shot(page, testInfo, ...)` at meaningful states.
 4. You ran `npm run test:e2e -- <your spec>` and it passes.
-5. You ran `npm run test:all` and 80/80 (≈) green.
+5. You ran `npm run test:all` and 101/101 (≈) green. (Or 100 passed +
+   1 skipped if WebGL is unavailable — see
+   [AGENTS.md](../../../AGENTS.md).)
 6. You promoted any ad-hoc driver into a permanent spec; no `_*.mjs`
    files are left in the working tree.
 7. You committed the spec ALONGSIDE the fix (one logical commit).

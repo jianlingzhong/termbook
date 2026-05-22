@@ -1,12 +1,16 @@
 # Decisions
 
 Why the code is the way it is. Each entry describes a bug or design
-question, the chosen solution, and the file/line where it lives. Read
-this before changing anything in the named files — you'll otherwise
-re-introduce a bug we already fixed.
+question, the chosen solution, and the file/function where it lives.
+Read this before changing anything in the named files — you'll
+otherwise re-introduce a bug that's already fixed.
 
 Entries are ordered by topic, not chronology. For chronological order
 see `git log --oneline`.
+
+Line numbers cited in this document are approximate and may drift as
+the code changes. Treat them as starting points; the function/symbol
+name is the load-bearing reference.
 
 ---
 
@@ -80,11 +84,12 @@ whether bare `\033]133;D;<n>\007` markers also close cells.
 | Active SSH cell (Path B) | `false` | localSalt or sshSalt only — NO unsalted |
 | Bootstrap (pre-`isPtyReady`) | `true` | Used just to learn initial pwd |
 
-**Why salt**: without it, a malicious or careless command could spoof the
-marker via stdout and prematurely close its own cell. E.g.
-`echo -e "\x1b]133;D;0\x07"` would falsely terminate. This is the exact
-shell-injection vector called out in
-[`docs/architecture_critique.md:230`](architecture_critique.md).
+**Why salt**: without it, a malicious or careless command could spoof
+the marker via stdout and prematurely close its own cell. E.g.
+`echo -e "\x1b]133;D;0\x07"` would falsely terminate. This is a real
+shell-injection vector — any command emitting the bare OSC 133;D
+sequence (some shell-integration plugins do this) would otherwise be
+able to close cells before they actually finish.
 
 **Why still allow unsalted in local mode**: many shell-integration setups
 (iTerm2, oh-my-zsh, p10k, the `foot` plugin) emit OSC 133;D **without**
@@ -543,17 +548,24 @@ See `App.jsx:521`.
 
 ## Tests
 
-### Why a separate Playwright config
+### Why two separate Playwright configs
 
-`frontend/playwright.config.ts` exists (from the original project) and
-targets `tests/**/*.spec.{js,ts}`. That directory has ~50 abandoned
-audit scripts from earlier debugging that don't pass and shouldn't run.
+Termbook has two test tiers (visual/regression and e2e) with different
+needs, so each has its own config:
 
-`frontend/playwright.visual.config.js` targets `tests/visual/*.spec.mjs`
-specifically. The `.mjs` extension keeps it cleanly separated from the
-legacy `.js`/`.ts` specs.
+- **`playwright.visual.config.js`** — targets `tests/visual/*.spec.mjs`.
+  Fast feedback, video only on failure, no global setup. Good for
+  iteration while fixing a bug.
+- **`playwright.e2e.config.js`** — targets `tests/e2e/*.spec.mjs`.
+  Video always on (the screencast IS the audit artifact). Spins up
+  the userspace sshd in `globalSetup` for the SSH spec
+  (`08_ssh_session.spec.mjs`).
 
-See [`frontend/tests/visual/README.md`](../frontend/tests/visual/README.md).
+Keeping the configs separate lets you run the fast suite without
+paying the e2e video-capture or sshd-startup overhead.
+
+See [`frontend/tests/visual/README.md`](../frontend/tests/visual/README.md)
+and [`frontend/tests/e2e/README.md`](../frontend/tests/e2e/README.md).
 
 ---
 
@@ -818,8 +830,9 @@ See `App.jsx` `handleCommand` passthrough branch (~line 490).
 
 ### Strip CI=true and friends from PTY child env {#ci-strip}
 
-**Symptom**: `gemini` (a corp-internal CLI) exited with `Exit 42` and
-"No input provided via stdin" when run from Termbook.
+**Symptom**: `gemini-cli` (and many other Ink/chalk-based CLIs) exited
+with `Exit 42` and "No input provided via stdin" when run from
+Termbook.
 
 **Cause**: gemini-cli (and many modern tools — Ink-based CLIs, chalk,
 npm) check `process.env.CI` and switch to non-interactive "headless"
