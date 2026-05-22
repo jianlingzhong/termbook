@@ -1,5 +1,5 @@
 procs:
   backend:
-    shell: cd backend && npm run dev
+    shell: cd backend && node server.js
   frontend:
     shell: cd frontend && npm run dev

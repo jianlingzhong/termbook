@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+title: "Termbook: a notebook-style web terminal for bash, zsh, and SSH"
+message: "If you use Termbook in research or a project, please cite it as below."
+type: software
+authors:
+  - family-names: Zhong
+    given-names: Jianling
+repository-code: "https://github.com/jianlingzhong/termbook"
+license: MIT
+version: "1.0.0"
+date-released: "2026-05-21"
+keywords:
+  - terminal
+  - web-terminal
+  - notebook
+  - shell
+  - ssh
+  - bash
+  - zsh
+  - xterm
+  - developer-tools
+abstract: >-
+  Termbook is a self-hosted, browser-based terminal that turns every
+  shell command into a notebook cell — like Jupyter, but for bash,
+  zsh, and remote SSH sessions. Each cell shows the command, output,
+  exit code, duration, working directory, and git/venv/conda context.
+  TUI apps open in a clean full-screen modal. SSH sessions get
+  per-remote-command cells with the real remote pwd, git branch, and
+  exit code.

@@ -21,60 +21,22 @@ yarn-error.log*
 *.swo
 .DS_Store
 
-# Testing
+# Testing artifacts
 test-results/
 playwright-report/
 playwright-report-visual/
 playwright-report-e2e/
 blob-report/
-test_output.log
-mprocs.log
 
 # OS generated files
 Thumbs.db
 ehthumbs.db
 Desktop.ini
 
-# Project Specific Junk
-*.log
-*.tmp
-*.txt
+# Termbook runtime artifacts
 backend/termbook_bashrc_*
 termbook.db
 termbook.db-journal
 termbook.db-wal
 termbook.db-shm
-frontend/screenshots/
-test-results/
-playwright-report/
-blob-report/
-AUDIT_REPORT.md
-CHECKLIST_AUDIT.md
-frontend-*.log
-backend-*.log
-backend.pid
-mprocs.log
-desc_*
-temp_desc*
-massive_audit.txt
-
-# Generated debugging files and media
-*.webm
-*.hex
-test_*.js
-test_*.py
-capture_*.py
-simulate_*.js
-run_test.js
-list_models.py
-*_frames/
-frontend/frames/
-frontend/frames_retry2/
-frontend/e2e_*.png
-frontend/audit_*.png
-frontend/infinite_*.png
-gemini_tui_frame_*.png
-*.pdf
-backend/test-pty.js
-frames_audit/
-test_output.log
+ssr_debug.log

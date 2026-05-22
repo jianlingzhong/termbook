@@ -9,6 +9,14 @@ export default function TuiModal({ activeTerminal, requestResize }) {
     if (!activeTerminal || !terminalRef.current) return;
     const { terminal, fitAddon } = activeTerminal;
 
+    // Mutating terminal.options.theme is xterm's documented public API for
+    // changing the rendered theme at runtime. The lint rule
+    // react-hooks/immutability flags it because `terminal` is destructured
+    // from a hook argument and the rule can't tell that this is an opaque
+    // xterm instance with its own mutable internal state (not a React-owned
+    // value). The mutation is intentional and the only way to set the modal
+    // background to pure black without re-creating the terminal.
+    // eslint-disable-next-line react-hooks/immutability
     terminal.options.theme = { ...terminal.options.theme, background: '#000000' };
     window.__ACTIVE_TERM = terminal;
 

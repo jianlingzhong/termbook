@@ -6,7 +6,7 @@ and this doc is stale — fix the doc.
 
 ## Two processes, one WebSocket
 
-```
+```text
 ┌─────────────────────┐         WebSocket           ┌──────────────────────┐
 │  Frontend (Vite)    │ ◄──────── /ws ────────────► │  Backend (Node)      │
 │  :4000              │                              │  :4001               │
@@ -72,7 +72,7 @@ code obvious.
      - Broadcasts `new_cell` to all clients (so other tabs see it too)
      - Writes `pwd\r\n` to the PTY
      - Logs `[COMMAND_START]`
-4. **PTY** runs `pwd`, emits `/Users/.../termbook\r\n` on stdout.
+4. **PTY** runs `pwd`, emits `/path/to/cwd\r\n` on stdout.
 5. **Backend** (`ptyProcess.onData`) for every chunk:
    - Appends to `session.tailBuf`
    - Writes to `session.headlessTerminal` (shadow buffer)
@@ -84,8 +84,8 @@ code obvious.
    - Calls `parseOutput(tailBuf, promptSalt)` looking for the prompt
      completion marker
 6. **Shell prompt fires**, emitting:
-   ```
-   \x1b]133;D;0;<promptSalt>\x07\x1b]7;file://localhost/Users/.../termbook\x07
+   ```text
+   \x1b]133;D;0;<promptSalt>\x07\x1b]7;file://localhost/path/to/cwd\x07
    ```
    (set via `PROMPT_COMMAND` injected by our rcfile)
 7. **Parser** returns `{exitCode, pwd, before, firstIndex, matchEnd}`.
@@ -160,7 +160,7 @@ detection. This is what the user wants 100% of the time.
 
 Key translations in `App.jsx` `handleCommand`:
 
-```
+```text
 printable char    → as-is
 Enter             → '\r'
 Backspace         → '\x7f'
@@ -181,7 +181,7 @@ bypass the keystroke forwarding).
 This is also what makes `cat` (no args) usable: type lines, press Ctrl+D
 to send EOF, cat exits cleanly.
 
-## SSH integration ("on by default")
+## SSH integration
 
 When the user runs `ssh user@host` (interactive, not single-shot, not
 `--no-termbook`), Termbook lets SSH connect normally, then once the
@@ -192,7 +192,7 @@ host, etc.
 
 Backend state machine (`backend/server.js`, SSH helpers ~line 297):
 
-```
+```text
 idle ──[ssh cmd submitted]──> pending
 pending ──[remote prompt + 600ms idle]──> injecting
 injecting ──[salted marker arrives]──> active
@@ -209,21 +209,22 @@ server whether the close was for the local shell (outer ssh exiting) or
 the remote shell (a remote command finishing).
 
 While `sshActive`, the parser is invoked with `allowUnsalted: false` —
-this is what makes the SSH integration safe: a malicious or buggy remote command
-emitting an unsalted `\033]133;D;0\007` cannot close cells.
+this is what makes the integration safe: a malicious or buggy remote
+command emitting an unsalted `\033]133;D;0\007` cannot close cells.
 
 Each remote-issued cell carries `remoteHost` so the frontend renders an
 orange `🔌 user@host` chip in `cell-header-right`, distinct from the
 cyan pwd-breadcrumb and purple git chip.
 
 Opt-out per command: `ssh --no-termbook host` (or `--no-tb`) keeps the
-cell in the pre-integration SSH mode mode (one big cell, full passthrough). Single-shot
-`ssh host 'cmd'` is detected and never injected. Nested ssh: only the
-outermost gets integration; inner is treated as a normal remote command.
+whole SSH session as one passthrough cell. Single-shot `ssh host 'cmd'`
+is detected and never injected. Nested ssh: only the outermost gets
+integration; inner is treated as a normal remote command.
 
-If injection doesn't produce a salted marker within 8 s
-(non-bash/zsh remote shell, output suppressed, etc.), `sshState='failed'`
-and Termbook degrades to today's "pre-integration" behavior automatically.
+If injection doesn't produce a salted marker within 8 s (non-bash/zsh
+remote shell, output suppressed, etc.), `sshState='failed'` and Termbook
+degrades automatically to the pre-integration behavior (one big SSH
+cell, unsalted remote markers may close cells).
 
 **Remote Tab completion**: chat input's Tab routes through the remote
 shell via a salted PTY-RPC (the `__tb_complete` function installed by
@@ -234,7 +235,8 @@ or falls back to the local completion module. Completion candidates
 reach the user normally; the user is unaware whether the source was
 local or remote.
 
-**Control-key forwarding** when chat input is idle with the SSH integration active:
+**Control-key forwarding** when chat input is idle inside an active
+SSH session:
 - Ctrl+D at empty input → `\x04` to remote PTY → remote bash EOFs → ssh
   exits → session ends (matches every-terminal-ever expectation).
 - Ctrl+C with content → `\x03` to remote PTY + clear chat input locally
@@ -244,10 +246,12 @@ local or remote.
 Frontend tracks `sessionSshActive[id]` driven by `session_init.sshActive`
 on join and `'ssh_state'` WS messages on transitions.
 
-Tested by `frontend/tests/e2e/08_ssh_session.spec.mjs` (13 tests covering
-happy path, remote pwd/git/exit, vim TUI over SSH, --no-termbook opt-out,
-nested ssh, the security regression for unsalted-marker spoofing, remote
-Tab completion with cycling, and Ctrl+C / Ctrl+D forwarding).
+Tested by `frontend/tests/e2e/08_ssh_session.spec.mjs` (16 tests
+covering happy path, remote pwd/git/exit, vim TUI over SSH,
+--no-termbook opt-out, nested ssh, the security regression for
+unsalted-marker spoofing, remote Tab completion with cycling, Ctrl+C /
+Ctrl+D forwarding, the local prompt prefix showing actual hostname,
+and the input-prefix host badge + sidebar SSH indicator).
 
 ## Scroll behavior
 
@@ -459,7 +463,7 @@ discarded.
 
 We also export `VIRTUAL_ENV_DISABLE_PROMPT=1` and `CONDA_CHANGEPS1=false`
 in our bashrc so the activate scripts don't mutate PS1 (which would leak
-`(venv) ` prefix into cell snapshots).
+the `(venv)` prompt prefix into cell snapshots).
 
 Schema (SQLite): cells table has `git_branch`, `virtual_env`, `conda_env`
 columns (added via idempotent ALTER TABLE migration in
@@ -580,10 +584,13 @@ The user pays a small cost (no zsh-specific functions) for big wins
 
 ## What's NOT here
 
-- No backend tests (the `backend/package.json` has Jest configured but no
-  actual test files). All testing is end-to-end via Playwright.
-- No backend logging beyond `ssr_debug.log` and stdout.
-- No queue/db/caching infrastructure.
-- No authentication. Anyone who reaches `:4001` gets a shell.
-- No TypeScript. Backend is plain CommonJS, frontend is JSX.
-- No build step for the backend. `node server.js` and you're running.
+- **No backend unit tests.** All testing is end-to-end via Playwright;
+  see [testing.md](testing.md).
+- **No backend logging** beyond `ssr_debug.log` and stdout.
+- **No queue/caching infrastructure** beyond the SQLite persistence
+  layer for sessions and cells.
+- **No authentication.** Anyone who reaches `:4001` gets a shell. See
+  [SECURITY.md](../SECURITY.md).
+- **No TypeScript.** Backend is plain CommonJS, frontend is JSX.
+- **No build step for the backend.** `node server.js` and it's
+  running.

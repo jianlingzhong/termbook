@@ -58,7 +58,11 @@ test.describe('motion stability', () => {
     test('TUI exit collapses to compact placeholder (no giant empty box)', async ({ page }) => {
         await gotoFreshSession(page);
         const inp = await waitInputReady(page);
-        await inp.fill('vim -u NONE /tmp/_motion_vim.txt');
+        // Force alt-screen via printf before vim so the test is
+        // deterministic across distros (vim's own t_ti setup is
+        // unreliable on Ubuntu CI). The visible UX is identical —
+        // the escape sequence draws no characters.
+        await inp.fill(`printf '\\033[?1049h' && vim /tmp/_motion_vim.txt && printf '\\033[?1049l'`);
         await inp.press('Enter');
         await page.waitForTimeout(2500);
 

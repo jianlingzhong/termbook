@@ -1,0 +1,140 @@
+name: Visual tests
+
+# Runs the 40-test motion + regression suite on every push to main and on
+# every PR. This is the fast tier (~3-5 min including setup) so PR feedback
+# is quick. The full E2E suite (60 tests including SSH integration) runs
+# separately in test-e2e.yml on PRs only.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs on the same branch if a new push comes in — saves CI
+# minutes and prevents stale results from "winning".
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install runtime dependencies the test suite assumes
+        # The motion/regression tests exercise real shell commands that
+        # need binaries the bare ubuntu-latest runner doesn't ship:
+        #   - vim          → tests/visual/regression.spec.mjs vim+TUI test
+        #   - python3-venv → tests/visual/regression.spec.mjs venv-chip test
+        #     (Ubuntu splits the stdlib venv module into a separate package)
+        # The local dev machines tend to have these by default, so this
+        # extra apt step is CI-only.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends vim python3-venv
+
+      - name: Install backend dependencies
+        working-directory: backend
+        # node-pty has a native-bindings build step that needs python + a
+        # compiler. ubuntu-latest ships both, so npm install works directly.
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browser (chromium only)
+        working-directory: frontend
+        # --with-deps installs OS-level libraries (libnss3, libatk-bridge…)
+        # that chromium needs but ubuntu-latest doesn't have pre-installed.
+        run: npx playwright install --with-deps chromium
+
+      - name: Start backend (background) and wait for health
+        working-directory: backend
+        # The test suite hits ws://localhost:4001/ws via the Vite dev server's
+        # proxy on :4000. Backend listens on 127.0.0.1:4001 by default.
+        run: |
+          node server.js > backend.log 2>&1 &
+          echo $! > backend.pid
+          # Wait up to 30s for backend to listen.
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:4001/api/config > /dev/null; then
+              echo "backend ready after ${i} attempts (~$((i*500))ms)"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "Backend never became ready. Log:"
+          cat backend.log
+          exit 1
+
+      - name: Start frontend (background) and wait for health
+        working-directory: frontend
+        run: |
+          npm run dev > frontend.log 2>&1 &
+          echo $! > frontend.pid
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:4000/ > /dev/null; then
+              echo "frontend ready after ${i} attempts (~$((i*500))ms)"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "Frontend never became ready. Log:"
+          cat frontend.log
+          exit 1
+
+      - name: Run visual test suite
+        working-directory: frontend
+        env:
+          # The bundled webServer in playwright.visual.config.js is guarded
+          # behind TERMBOOK_CI=1 (auto-starts servers). We start them
+          # manually above so we get separate, inspectable log streams.
+          # Leaving TERMBOOK_CI unset means the config skips its own
+          # webServer block.
+          TERMBOOK_CI: ''
+        run: npm run test:visual
+
+      - name: Stop background servers
+        if: always()
+        run: |
+          [ -f backend/backend.pid ] && kill "$(cat backend/backend.pid)" 2>/dev/null || true
+          [ -f frontend/frontend.pid ] && kill "$(cat frontend/frontend.pid)" 2>/dev/null || true
+          # Give them a moment to flush logs.
+          sleep 1
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs-visual
+          path: |
+            backend/backend.log
+            frontend/frontend.log
+            ssr_debug.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-visual
+          path: |
+            frontend/playwright-report-visual
+            frontend/test-results
+          retention-days: 7
+          if-no-files-found: ignore

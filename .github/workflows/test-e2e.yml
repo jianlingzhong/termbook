@@ -1,0 +1,123 @@
+name: E2E tests
+
+# Runs the full 61-test end-to-end suite on every PR. Slower than
+# test-visual.yml (~15 min on CI hardware) because it includes:
+#   - The 16-test SSH integration suite, which requires a userspace sshd
+#     listening on 127.0.0.1:2222 (tests/e2e/ssh-global-setup.mjs starts it).
+#   - Video recording on every test (per playwright.e2e.config.js).
+# Push-to-main is NOT triggered; this only gates merges. test-visual.yml
+# already covers push-to-main with the fast 40-test tier.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install runtime dependencies the test suite assumes
+        # Same as test-visual.yml: the e2e suite exercises vim, less, and
+        # python3 venv via real shell commands. Pre-install them here.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends vim less python3-venv
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browser (chromium only)
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Install openssh-server (for SSH integration tests)
+        # The userspace sshd that tests/e2e/ssh-global-setup.mjs spawns is
+        # the real openssh-server binary. Ubuntu doesn't ship it on the
+        # default runner image — we need to apt-install it. Client (`ssh`)
+        # IS pre-installed, but the daemon (`sshd`) is not.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends openssh-server
+          # Ubuntu's openssh-server install activates the system sshd on
+          # :22. We don't want that — it conflicts with nothing on a CI
+          # runner but it's noise. Disable it.
+          sudo systemctl stop ssh.service || true
+          sudo systemctl disable ssh.service || true
+
+      - name: Start backend and frontend
+        run: |
+          (cd backend && node server.js > backend.log 2>&1 &)
+          (cd frontend && npm run dev > frontend.log 2>&1 &)
+          # Wait for both ports.
+          for port in 4001 4000; do
+            for i in $(seq 1 60); do
+              if nc -z localhost $port 2>/dev/null; then
+                echo "port $port ready after ~$((i*500))ms"
+                break
+              fi
+              sleep 0.5
+            done
+          done
+
+      - name: Run E2E test suite
+        working-directory: frontend
+        env:
+          # Force-kill the userspace sshd after the suite. Locally we keep
+          # it running for re-run speed, but CI runners are ephemeral so
+          # there's nothing to preserve.
+          TERMBOOK_E2E_KILL_SSHD: '1'
+        run: npm run test:e2e
+
+      - name: Stop background servers
+        if: always()
+        run: |
+          pkill -f "node server.js" 2>/dev/null || true
+          pkill -f "npm run dev" 2>/dev/null || true
+          pkill -f "vite" 2>/dev/null || true
+          sleep 1
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs-e2e
+          path: |
+            backend/backend.log
+            frontend/frontend.log
+            ssr_debug.log
+            /tmp/termbook-e2e-sshd/sshd.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload Playwright report + videos on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-e2e
+          path: |
+            frontend/playwright-report-e2e
+            frontend/test-results
+          retention-days: 7
+          if-no-files-found: ignore

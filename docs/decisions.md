@@ -1,12 +1,16 @@
 # Decisions
 
 Why the code is the way it is. Each entry describes a bug or design
-question, the chosen solution, and the file/line where it lives. Read
-this before changing anything in the named files — you'll otherwise
-re-introduce a bug we already fixed.
+question, the chosen solution, and the file/function where it lives.
+Read this before changing anything in the named files — you'll
+otherwise re-introduce a bug that's already fixed.
 
 Entries are ordered by topic, not chronology. For chronological order
 see `git log --oneline`.
+
+Line numbers cited in this document are approximate and may drift as
+the code changes. Treat them as starting points; the function/symbol
+name is the load-bearing reference.
 
 ---
 
@@ -80,11 +84,12 @@ whether bare `\033]133;D;<n>\007` markers also close cells.
 | Active SSH cell (the SSH integration) | `false` | localSalt or sshSalt only — NO unsalted |
 | Bootstrap (pre-`isPtyReady`) | `true` | Used just to learn initial pwd |
 
-**Why salt**: without it, a malicious or careless command could spoof the
-marker via stdout and prematurely close its own cell. E.g.
-`echo -e "\x1b]133;D;0\x07"` would falsely terminate. This is the exact
-shell-injection vector called out in
-[`docs/earlier-design-notes.md:230`](earlier-design-notes.md).
+**Why salt**: without it, a malicious or careless command could spoof
+the marker via stdout and prematurely close its own cell. E.g.
+`echo -e "\x1b]133;D;0\x07"` would falsely terminate. This is a real
+shell-injection vector — any command emitting the bare OSC 133;D
+sequence (some shell-integration plugins do this) would otherwise be
+able to close cells before they actually finish.
 
 **Why still allow unsalted in local mode**: many shell-integration setups
 (iTerm2, oh-my-zsh, p10k, the `foot` plugin) emit OSC 133;D **without**
@@ -543,17 +548,24 @@ See `App.jsx:521`.
 
 ## Tests
 
-### Why a separate Playwright config
+### Why two separate Playwright configs
 
-`frontend/playwright.config.ts` exists (from the original project) and
-targets `tests/**/*.spec.{js,ts}`. That directory has ~50 abandoned
-audit scripts from earlier debugging that don't pass and shouldn't run.
+Termbook has two test tiers (visual/regression and e2e) with different
+needs, so each has its own config:
 
-`frontend/playwright.visual.config.js` targets `tests/visual/*.spec.mjs`
-specifically. The `.mjs` extension keeps it cleanly separated from the
-legacy `.js`/`.ts` specs.
+- **`playwright.visual.config.js`** — targets `tests/visual/*.spec.mjs`.
+  Fast feedback, video only on failure, no global setup. Good for
+  iteration while fixing a bug.
+- **`playwright.e2e.config.js`** — targets `tests/e2e/*.spec.mjs`.
+  Video always on (the screencast IS the proof of behavior). Spins up
+  the userspace sshd in `globalSetup` for the SSH spec
+  (`08_ssh_session.spec.mjs`).
 
-See [`frontend/tests/visual/README.md`](../frontend/tests/visual/README.md).
+Keeping the configs separate lets you run the fast suite without
+paying the e2e video-capture or sshd-startup overhead.
+
+See [`frontend/tests/visual/README.md`](../frontend/tests/visual/README.md)
+and [`frontend/tests/e2e/README.md`](../frontend/tests/e2e/README.md).
 
 ---
 
@@ -585,7 +597,8 @@ in-memory only. Backend restart wiped every cell.
 finished cells to `termbook.db` at the repo root.
 
 Schema:
-```
+
+```text
 sessions(id, pwd, created_at, last_activity)
 cells(id, session_id, command, snapshot_ansi, snapshot_cols,
       snapshot_rows, exit_code, pwd, executable_pwd, used_tui,
@@ -749,7 +762,7 @@ Venv and conda env are different — they live inside the PTY shell, not
 the parent process. We can't read them from `process.env`. To surface
 them, we added a custom OSC marker to `PROMPT_COMMAND`:
 
-```
+```text
 \033]1338;TBENV;venv=myenv;conda=other\007
 ```
 
@@ -764,8 +777,8 @@ single-quoted command produces trailing-quote artifacts on macOS bash 3.
 Use bash parameter expansion `${VIRTUAL_ENV##*/}` instead.
 
 Also: export `VIRTUAL_ENV_DISABLE_PROMPT=1` and `CONDA_CHANGEPS1=false`
-so the activate scripts don't mutate PS1 and leak `(venv) ` prefix into
-cell snapshots.
+so the activate scripts don't mutate PS1 and leak the `(venv)` prompt
+prefix into cell snapshots.
 
 See `backend/server.js` `buildBashRc` (the env marker construction),
 `backend/parser.js` (env regex), `backend/env_detect.js` (git detection),
@@ -790,7 +803,7 @@ modal isn't open, the chat input enters passthrough mode** (`isPassthrough
 = sessionRunning[id] && !activeTuiState`). Every keystroke is forwarded
 to the running command's PTY as raw bytes:
 
-```
+```text
 printable char  → as-is
 Enter           → '\r'
 Backspace       → '\x7f'
@@ -818,8 +831,9 @@ See `App.jsx` `handleCommand` passthrough branch (~line 490).
 
 ### Strip CI=true and friends from PTY child env {#ci-strip}
 
-**Symptom**: `gemini` (a corp-internal CLI) exited with `Exit 42` and
-"No input provided via stdin" when run from Termbook.
+**Symptom**: `gemini-cli` (and many other Ink/chalk-based CLIs) exited
+with `Exit 42` and "No input provided via stdin" when run from
+Termbook.
 
 **Cause**: gemini-cli (and many modern tools — Ink-based CLIs, chalk,
 npm) check `process.env.CI` and switch to non-interactive "headless"
@@ -938,7 +952,7 @@ or the REMOTE bash (a remote command finished).
 
 **State machine** (see `backend/server.js` SSH helpers section, ~line 297):
 
-```
+```text
   idle ──[user submits `ssh host`]──> pending
   pending ──[remote prompt + 600ms idle]──> injecting
   injecting ──[salted marker arrives]──> active
@@ -1288,7 +1302,7 @@ content cut off.
 - The OLD heuristic was "high ANSI score = inline TUI" — that
   accidentally promoted gemini-cli/claude-cli/Ink-based CLIs which
   are genuinely INLINE interactive (they expect cell-style rendering
-  + passthrough input). Promoting those broke them.
+  AND passthrough input). Promoting those broke them.
 - A curated list keeps known-fullscreen-TUIs (vim/nvim/htop/less)
   promoted while leaving inline-interactive apps alone.
 - Adding new apps is a one-line change in `KNOWN_TUI_COMMANDS`.
@@ -1325,10 +1339,9 @@ the user instantly sees what host their input goes to.
 `localHostname: os.hostname()` (with `.local` suffix stripped on
 macOS). Frontend uses it in the prefix slot.
 
-**Don't** include the FQDN — `<example-host>.corp.example` is
-fine but borderline long. The `.local` strip is the only
-shortening; further trimming risks ambiguity if user has multiple
-similar hosts.
+**Don't** trim the hostname further than `.local`. A user with several
+machines named e.g. `mac-1.corp.example` and `mac-2.corp.example` would
+otherwise see the same prompt prefix everywhere.
 
 See `backend/server.js:/api/config` and `frontend/src/App.jsx`
 prefix render in `chat-input-wrapper`.

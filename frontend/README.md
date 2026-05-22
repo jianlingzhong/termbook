@@ -1,16 +1,59 @@
-# React + Vite
+# Termbook frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite + xterm.js client for Termbook. See the
+[top-level README](../README.md) for project overview, install, and run
+instructions, and [`AGENTS.md`](../AGENTS.md) for the engineering
+contract.
 
-Currently, two official plugins are available:
+## Quick commands
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+```bash
+npm install
+npm run dev           # Vite dev server on :4000 (HMR disabled — see vite.config.js)
+npm run build         # production build → dist/
+npm run lint          # eslint src/
 
-## React Compiler
+# Tests
+npm run test:visual   # 40 functional + motion-regression tests (~3 min)
+npm run test:e2e      # 61 end-to-end tests with screenshots/video (~6 min)
+npm run test:all      # both
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Layout
 
-## Expanding the ESLint configuration
+```
+src/
+├── main.jsx           React entry point
+├── App.jsx            session/cell/WS state (~1320 lines, single file by design)
+├── NotebookCell.jsx   per-cell rendering (live xterm + snapshot HTML)
+├── TuiModal.jsx       full-screen TUI host (vim, htop, etc.)
+├── debug.js           ring-buffer logger (window.__tbDebug() in DevTools)
+└── index.css          all styles
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+tests/
+├── visual/            fast functional + motion-regression suite
+└── e2e/               full human-workflow tests with video + pixel goldens
+
+playwright.visual.config.js   visual suite config
+playwright.e2e.config.js      e2e suite config
+vite.config.js                Vite dev server config (HMR off, /api proxy → :4001)
+eslint.config.js
+```
+
+## Things worth knowing
+
+- **HMR is intentionally disabled** in `vite.config.js`. xterm.js's
+  internal renderer state survives HMR component swaps and gets
+  corrupted mid-session. Hard-reload (Cmd+Shift+R) after frontend
+  edits.
+- The Vite dev server proxies `/api` and `/ws` to `localhost:4001`
+  (the backend).
+- We use the WebGL renderer for xterm.js (`@xterm/addon-webgl`) so
+  the cursor stays pixel-aligned in nvim/vim/etc. Falls back to DOM
+  silently if WebGL is unavailable.
+- All styles live in `src/index.css`. There's no `App.css` or
+  CSS-in-JS layer.
+
+See [`docs/architecture.md`](../docs/architecture.md) and
+[`docs/decisions.md`](../docs/decisions.md) for the why-it's-this-way
+details.
