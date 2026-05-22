@@ -16,7 +16,10 @@ tests/e2e/
 ├── 04_persistence.spec.mjs          # backend restart → cells survive
 ├── 05_motion_stability.spec.mjs     # sampling-based flash detection
 ├── 06_visual_snapshots.spec.mjs     # pixel-diff against golden PNGs
-└── 07_scroll_behavior.spec.mjs      # 19-test scroll matrix (submit/switch/restore/bounce/vim/passthrough)
+├── 07_scroll_behavior.spec.mjs      # 19-test scroll matrix (submit/switch/restore/bounce/vim/passthrough)
+├── 08_ssh_session.spec.mjs          # SSH Path B: remote pwd/git/exit, Tab, Ctrl+D, chips, vim over SSH
+├── ssh-global-setup.mjs             # spawns userspace sshd on 127.0.0.1:2222
+└── ssh-global-teardown.mjs
 ```
 
 For the full helper API reference and conventions, see

@@ -1,7 +1,8 @@
 # Visual & motion tests
 
-Curated end-to-end test suite for Termbook. Lives in `tests/visual/` to keep
-it separate from the legacy `tests/*.spec.{js,ts}` ad-hoc audit scripts.
+Curated end-to-end test suite for Termbook. Targets motion regressions and
+structural invariants — anything that can be checked via a single page state
+or via short-window animation sampling.
 
 Two kinds of tests:
 

@@ -24,11 +24,9 @@ what not to do, where the traps are, and what "done" looks like.
      a userspace sshd on 127.0.0.1:2222 — `tests/e2e/ssh-global-setup.mjs`
      handles spinning it up on first run and reuses it on subsequent runs.
    - `npm run test:all` runs both.
-   - **Always 100/100 green** before you claim done (1 of the e2e tests
+   - **Always 101/101 green** before you claim done (1 of the e2e tests
      skips when WebGL is unavailable, so headless without GPU shows
-     99 passed + 1 skipped; real environments run all 100).
-   - The legacy `frontend/tests/*.spec.{js,ts}` is abandoned cruft
-     — do not run or modify it.
+     100 passed + 1 skipped; real environments run all 101).
 4. Before claiming "done": `npm run test:all` must pass green. Show the
    user real screenshots or videos of the change (the e2e tests produce
    these automatically in `frontend/test-results/`).
@@ -84,8 +82,6 @@ termbook/
 │   │   ├── 07_*-snapshots/                 ← golden PNGs (committed)
 │   │   ├── helpers.mjs
 │   │   └── README.md
-│   ├── tests/                      ← ~50 abandoned audit scripts (ignore)
-│   ├── playwright.config.ts          ← legacy config (ignore)
 │   ├── playwright.visual.config.js   ← visual / regression suite
 │   └── playwright.e2e.config.js      ← e2e suite (video always on)
 └── docs/
@@ -99,10 +95,10 @@ termbook/
             └── SKILL.md
 ```
 
-The repo also contains ~1800 audit PNGs (`*_frames/`, `gemini_tui_*.png`),
-several `.webm` videos, and `.md` audit reports from earlier debugging work.
-**Do not touch them.** They are not in scope and deleting them is a separate
-explicit task.
+Pre-v1.0 history contained many audit PNGs, abandoned spec files, and
+historical planning docs. Commit `0656f44` pruned them in preparation
+for the public release; they remain in git history if you need to
+reference them.
 
 ## Working rules
 
@@ -142,10 +138,6 @@ explicit task.
   xterm.js causes terminal state corruption mid-session).
 - Never add auth/auth-like logic unless the user explicitly asks. Termbook
   is localhost-only by design.
-- Never rely on the legacy `frontend/tests/*.spec.{js,ts}` files. They are
-  abandoned. They run against assumptions that no longer hold.
-- Never delete or "tidy up" the audit PNGs, webms, or old docs in `docs/`
-  without explicit instruction. They are historical evidence of past bugs.
 - Never delete an e2e test as an "ad-hoc debug script". Promote it.
 - Never re-introduce hardcoded `cols: 120, rows: 24` for the headless or
   temp terminals. The exit message now carries `snapshotCols`/`snapshotRows`
@@ -344,10 +336,10 @@ A change is done when:
 
 ## Anti-patterns observed in this repo's history
 
-Listed so you don't repeat them. See `git log --oneline | tail -10` for
-the older commits; the work before commit `7e1797d` followed many of these
+Listed so you don't repeat them. See `git log --oneline` for older
+commits; the work before commit `7e1797d` followed many of these
 patterns and produced the ~1800 audit PNGs and ~50 abandoned spec files
-still in the repo.
+that commit `0656f44` pruned before the v1.0 release.
 
 - **Audit-PNG-driven development**: capturing hundreds of screenshots
   without an assertion that fails when the bug returns. The screenshots
