@@ -511,8 +511,11 @@ test.describe('SSH integration (default)', () => {
 
         // Should have completed `ec` → some command starting with `ec`.
         // `echo` is the most common; allow any `ec*` candidate (avoids
-        // brittleness across remote shells).
-        expect(completed).toMatch(/^ec[a-z_-]/);
+        // brittleness across remote shells). On Ubuntu CI runners the
+        // first match alphabetically is often `ec2metadata` (an EC2-
+        // helper that ships in default Ubuntu cloud images), hence the
+        // \\w pattern that accepts digits too.
+        expect(completed).toMatch(/^ec\w/);
 
         await page.keyboard.press('Escape');
         await inp.fill('');

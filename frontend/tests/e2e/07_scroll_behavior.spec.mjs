@@ -346,8 +346,15 @@ test.describe('scroll behavior — content shape × scroll state × switch patte
     });
 
     // === PIXEL-LEVEL VERIFICATION ======================================
+    //
+    // G1 / G2 are pixel-perfect snapshot tests. The goldens are platform-
+    // specific (macOS font rendering vs Linux); committed copies are
+    // darwin-only. Skip on non-darwin so CI on Linux doesn't fail for
+    // reasons unrelated to scroll behavior. The non-pixel scroll tests
+    // above this section still run on all platforms.
 
     test('G1: pixel snapshot — short cell at top of viewport (golden)', async ({ page }, testInfo) => {
+        test.skip(process.platform !== 'darwin', 'pixel goldens are darwin-only');
         await gotoFreshSession(page);
         await runCommand(page, 'echo cell_one');
         await runCommand(page, 'echo cell_two');
@@ -370,6 +377,7 @@ test.describe('scroll behavior — content shape × scroll state × switch patte
     });
 
     test('G2: pixel snapshot — long-output cell at top (cell header + first rows visible)', async ({ page }, testInfo) => {
+        test.skip(process.platform !== 'darwin', 'pixel goldens are darwin-only');
         await gotoFreshSession(page);
         await runCommand(page, 'echo before');
         await runCommand(page, 'seq 1 100', { afterWaitMs: 1500 });

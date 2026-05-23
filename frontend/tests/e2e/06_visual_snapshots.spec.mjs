@@ -43,7 +43,20 @@ const volatileMasks = (page) => [
     page.locator('.pwd-prompt-prefix'),     // chat input shows hostname
 ];
 
+// Pixel snapshots are platform-specific (font rendering, antialiasing,
+// and font availability differ between macOS and Linux). The goldens
+// committed to this repo were generated on macOS; running these on a
+// Linux CI runner will fail with "no snapshot for platform" or pixel
+// diffs that have nothing to do with the SUT.
+//
+// We skip them on non-darwin platforms. The OTHER 57 e2e tests run on
+// every platform — those gate CI for cross-platform correctness.
+// Contributors on Linux who want to regenerate the goldens for their
+// own platform can run `npm run test:e2e:update` locally; the
+// per-platform golden files (chromium-linux.png) coexist with the
+// darwin ones in tests/e2e/*-snapshots/.
 test.describe('visual snapshots', () => {
+    test.skip(process.platform !== 'darwin', 'pixel goldens are darwin-only');
 
     test('welcome state pixels match golden', async ({ page }, testInfo) => {
         await gotoFreshSession(page);

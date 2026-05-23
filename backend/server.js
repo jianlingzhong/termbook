@@ -912,6 +912,14 @@ function startCommand(session, cellId, commandData) {
     let inSshContext = session.sshActive && session.sshState === 'active';
     if (!inSshContext) {
         const sshInfo = sshMod.parseSshCommand(commandData);
+        // Always use the cleaned form when the command is recognized as ssh
+        // — that strips Termbook-specific flags (`--no-termbook`, `--no-tb`)
+        // before they reach the real ssh binary. Otherwise opt-out users
+        // see "unknown option" errors from ssh itself. Note this runs
+        // regardless of whether we engage the integration.
+        if (sshInfo.isSsh) {
+            commandData = sshInfo.cleanedCommand;
+        }
         if (sshInfo.isSsh && !sshInfo.isSingleShot && !sshInfo.optOut) {
             session.sshActive = true;
             session.sshHost = sshInfo.host;
@@ -919,8 +927,6 @@ function startCommand(session, cellId, commandData) {
             session.sshPromptSalt = uuidv4().replace(/-/g, '');
             session.sshState = 'pending';
             isSshOuterStart = true;
-            // Replace commandData with the cleaned form (--no-termbook stripped).
-            commandData = sshInfo.cleanedCommand;
             debugLog(`[SSH_START] session ${session.id} host=${sshInfo.host} salt=${session.sshPromptSalt}`);
         }
     }
