@@ -32,26 +32,33 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
       - name: Run analysis
-        uses: ossf/scorecard-action@v2.4.3
+        uses: ossf/scorecard-action@05b42c624433fc40578a4040d5cf5e36ddca8cde # v2.4.3
         with:
           results_file: results.sarif
           results_format: sarif
           # Set to true to publish to the OSSF API (makes the public badge work).
           publish_results: true
+          # If a SCORECARD_TOKEN secret exists (fine-grained PAT with
+          # Administration: read-only on this repo), pass it so the
+          # Branch-Protection and Webhooks checks can read settings the
+          # default GITHUB_TOKEN can't. Falls back to GITHUB_TOKEN
+          # silently when the secret is unset (both other checks just
+          # skip Branch-Protection in that case).
+          repo_token: ${{ secrets.SCORECARD_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Upload artifact (SARIF)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: SARIF results
           path: results.sarif
           retention-days: 5
 
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           sarif_file: results.sarif
