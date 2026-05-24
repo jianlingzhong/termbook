@@ -378,6 +378,14 @@ export default function NotebookCell({ id, snapshotAnsi, snapshotCols, snapshotR
             <div className="tui-completed-placeholder">SSH session — each remote command appears as its own cell below</div>
           )}
           {!usedTui && !usedSshSession && displaySnapshot && (
+            // Safety: `displaySnapshot` is produced by xterm.js's
+            // `@xterm/addon-serialize` (the canonical serializer for
+            // xterm buffers), which HTML-escapes every character before
+            // wrapping it in `<span>` runs. The downstream `.replace()`
+            // calls (see snapshot render effect above) only strip
+            // font-family/font-size from inline styles — they don't
+            // introduce un-escaped content. Result: no XSS surface
+            // here, even though the prop name says otherwise.
             <div
               className="snapshot-output"
               dangerouslySetInnerHTML={{ __html: displaySnapshot }}

@@ -165,16 +165,25 @@ function handleResize(session) {
 function detectUserShell() {
   const envShell = process.env.SHELL;
   if (envShell && fs.existsSync(envShell)) return envShell;
+  // `USER` is local-user-controlled; the threat model trusts the local
+  // user (this server is loopback-only — see SECURITY.md), but use
+  // execFileSync with explicit argv (no shell) to avoid any future
+  // surprise if the trust boundary widens. Validate the username
+  // first as belt + suspenders against unexpected control characters.
+  const user = process.env.USER;
+  if (!user || !/^[a-zA-Z0-9._-]+$/.test(user)) return '/bin/bash';
   try {
-    const out = cp.execSync(`dscl . -read /Users/${process.env.USER} UserShell 2>/dev/null`).toString();
+    const out = cp.execFileSync('dscl', ['.', '-read', `/Users/${user}`, 'UserShell'],
+      { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
     const m = out.match(/UserShell:\s*(\S+)/);
     if (m && fs.existsSync(m[1])) return m[1];
-  } catch (e) {}
+  } catch (e) { /* dscl absent or user not found */ }
   try {
-    const out = cp.execSync(`getent passwd ${process.env.USER} 2>/dev/null`).toString();
+    const out = cp.execFileSync('getent', ['passwd', user],
+      { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
     const parts = out.trim().split(':');
     if (parts[6] && fs.existsSync(parts[6])) return parts[6];
-  } catch (e) {}
+  } catch (e) { /* getent absent (macOS) or user not found */ }
   return '/bin/bash';
 }
 
