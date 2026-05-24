@@ -16,7 +16,7 @@
 //   - Switch patterns: A→B→A / A→B→C→A / A→B→A→B→A (bouncing)
 //   - Post-switch action: observe / submit-new / wheel-again
 //
-// All tests take labeled screenshots at every key state for visual audit.
+// All tests take labeled screenshots at every key state for visual review.
 
 import { test, expect } from '@playwright/test';
 import {

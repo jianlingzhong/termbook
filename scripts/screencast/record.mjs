@@ -98,8 +98,8 @@ await page.route('**/api/config', async (route) => {
     });
 });
 
-// Inject CSS via initScript to scrub paths that would otherwise leak
-// the recorder's home directory. The backend's launch dir
+// Inject CSS via initScript to hide breadcrumb elements that would
+// otherwise show the recorder's home directory. The backend's launch dir
 // (e.g. /Users/<name>/path/to/termbook) appears in:
 //   - the top .pwd-breadcrumb (until the user cd's elsewhere)
 //   - the per-cell .cell-header-breadcrumb on cells run from there
