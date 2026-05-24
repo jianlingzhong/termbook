@@ -35,7 +35,8 @@ concurrency:
 jobs:
   fuzz:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 5-min fuzz budget + ~2 min setup overhead + headroom = 10 min cap.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -46,12 +47,14 @@ jobs:
       - name: Install jsfuzz
         run: npm install -g jsfuzz
 
-      - name: Run fuzz target (10 min budget)
+      - name: Run fuzz target (5 min budget)
         working-directory: backend
+        # --fuzzTime is seconds. 300 = 5 minutes per run; enough to
+        # exercise the parser with coverage-guided generation without
+        # blowing the CI minute budget on a small library.
         run: |
           mkdir -p fuzz-corpus
-          # --fuzzTime is seconds. 600 = 10 minutes per run.
-          jsfuzz parser.fuzz.js fuzz-corpus --fuzzTime 600 || (
+          jsfuzz parser.fuzz.js fuzz-corpus --fuzzTime 300 || (
             echo "::error::jsfuzz found a parser bug"
             exit 1
           )
