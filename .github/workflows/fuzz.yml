@@ -39,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-node@e3eb5604c5ad9f33d2eaa9d1d7d9c80b0e95f846 # v6.0.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
 
@@ -58,7 +58,7 @@ jobs:
 
       - name: Upload crash inputs on failure
         if: failure()
-        uses: actions/upload-artifact@1c54c41060f7afd2bb0f4f4ec02b2eb27bef93c0 # v7.0.0
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fuzz-crashes
           path: backend/crash-*
