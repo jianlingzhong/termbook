@@ -1,0 +1,66 @@
+name: Fuzz
+
+# Fuzz-tests the OSC marker parser (backend/parser.js) with jsfuzz.
+# The parser consumes untrusted bytes from PTY stdout — anything a
+# running command can write — so it must never throw or hang on
+# malformed input.
+#
+# Runs nightly (10-minute budget) and on every PR to backend/parser.js.
+# A finding fails the workflow + uploads the offending input as an
+# artifact so it can be added to the regression test suite.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/parser.js'
+      - 'backend/parser.fuzz.js'
+      - '.github/workflows/fuzz.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/parser.js'
+      - 'backend/parser.fuzz.js'
+  schedule:
+    # 04:23 UTC nightly — offset minute, off-peak hour.
+    - cron: '23 4 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-node@e3eb5604c5ad9f33d2eaa9d1d7d9c80b0e95f846 # v6.0.0
+        with:
+          node-version: '22'
+
+      - name: Install jsfuzz
+        run: npm install -g jsfuzz
+
+      - name: Run fuzz target (10 min budget)
+        working-directory: backend
+        run: |
+          mkdir -p fuzz-corpus
+          # --fuzzTime is seconds. 600 = 10 minutes per run.
+          jsfuzz parser.fuzz.js fuzz-corpus --fuzzTime 600 || (
+            echo "::error::jsfuzz found a parser bug"
+            exit 1
+          )
+
+      - name: Upload crash inputs on failure
+        if: failure()
+        uses: actions/upload-artifact@1c54c41060f7afd2bb0f4f4ec02b2eb27bef93c0 # v7.0.0
+        with:
+          name: fuzz-crashes
+          path: backend/crash-*
+          retention-days: 14
+          if-no-files-found: ignore
