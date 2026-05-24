@@ -44,8 +44,8 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install jsfuzz
-        run: npm install -g jsfuzz
+      - name: Install jsfuzz (pinned version for reproducibility)
+        run: npm install -g jsfuzz@1.0.15
 
       - name: Run fuzz target (5 min budget)
         working-directory: backend
