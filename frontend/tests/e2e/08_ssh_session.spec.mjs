@@ -218,10 +218,12 @@ test.describe('SSH integration (default)', () => {
         await loginSsh(page);
         // Prepare a file on remote
         await runRemote(page, 'echo "vim test content" > /tmp/termbook_e2e_vim.txt');
-        // Open vim
+        // Open vim. Wrap with explicit alt-screen escape so this is
+        // deterministic on Ubuntu CI (vim's own terminfo-driven emission
+        // is unreliable there). See helpers.mjs `tuiCmd`.
         const inp = page.locator('.chat-input-wrapper textarea').first();
         await inp.focus();
-        await inp.fill('vim /tmp/termbook_e2e_vim.txt');
+        await inp.fill(`printf '\\033[?1049h' && vim /tmp/termbook_e2e_vim.txt && printf '\\033[?1049l'`);
         await inp.press('Enter');
         // Wait for TUI modal
         const tuiDeadline = Date.now() + 5000;
