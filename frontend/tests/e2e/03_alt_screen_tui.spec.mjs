@@ -13,6 +13,7 @@ import {
     waitForIdle,
     shot,
     lastCellInfo,
+    tuiCmd,
 } from './helpers.mjs';
 
 test.use({ viewport: VIEWPORT });
@@ -26,7 +27,7 @@ test.describe('alt-screen TUIs', () => {
         await page.locator('.chat-input-wrapper textarea').first().press('Enter');
         await waitForIdle(page);
 
-        await startCommand(page, 'vim /tmp/tb_vim_test.txt');
+        await startCommand(page, tuiCmd('vim /tmp/tb_vim_test.txt'));
         // Wait for TUI modal.
         await page.waitForSelector('.tui-modal-overlay', { timeout: 8000 });
         await page.waitForTimeout(1000);
@@ -55,7 +56,7 @@ test.describe('alt-screen TUIs', () => {
 
     test('vim cell does NOT enter passthrough mode (modal owns input)', async ({ page }) => {
         await gotoFreshSession(page);
-        await startCommand(page, 'vim /tmp/tb_vim_pt_test.txt');
+        await startCommand(page, tuiCmd('vim /tmp/tb_vim_pt_test.txt'));
         await page.waitForSelector('.tui-modal-overlay', { timeout: 8000 });
 
         // Chat input should be flagged as TUI, not passthrough.
@@ -101,7 +102,7 @@ test.describe('alt-screen TUIs', () => {
         await page.locator('.chat-input-wrapper textarea').first().press('Enter');
         await waitForIdle(page);
 
-        await startCommand(page, 'nvim /tmp/tb_nvim_e2e.txt');
+        await startCommand(page, tuiCmd('nvim /tmp/tb_nvim_e2e.txt'));
         await page.waitForSelector('.tui-window', { timeout: 8000 });
         // Wait for the resize race to settle + the forced \x0c redraw to fire.
         await page.waitForTimeout(2500);
@@ -196,7 +197,7 @@ test.describe('alt-screen TUIs', () => {
         await page.locator('.chat-input-wrapper textarea').first().press('Enter');
         await waitForIdle(page);
 
-        await startCommand(page, 'nvim /tmp/tb_nav_test.txt');
+        await startCommand(page, tuiCmd('nvim /tmp/tb_nav_test.txt'));
         await page.waitForSelector('.tui-window', { timeout: 8000 });
         await page.waitForTimeout(1500);
 
@@ -271,7 +272,7 @@ test.describe('alt-screen TUIs', () => {
         await page.locator('.chat-input-wrapper textarea').first().press('Enter');
         await waitForIdle(page);
 
-        await startCommand(page, 'nvim /tmp/tb_webgl_test.txt');
+        await startCommand(page, tuiCmd('nvim /tmp/tb_webgl_test.txt'));
         await page.waitForSelector('.tui-window', { timeout: 8000 });
         await page.waitForTimeout(1500);
 

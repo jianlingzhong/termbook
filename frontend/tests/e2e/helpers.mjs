@@ -75,6 +75,22 @@ export async function startCommand(page, cmd) {
     return inp;
 }
 
+// Wrap a TUI command so the alt-screen escape is emitted deterministically.
+//
+// vim/nvim's decision to switch to the alt buffer depends on terminfo +
+// system vimrc + TERM value. On Ubuntu CI runners that chain isn't
+// reliable; we sometimes get vim rendering inline and the TUI modal
+// never opens. Prefix with `printf '\x1b[?1049h'` to force the modal,
+// run the command, then `printf '\x1b[?1049l'` to exit the alt buffer
+// cleanly on the way out.
+//
+// Use for: vim, nvim, less, more, htop (any alt-screen TUI invocation
+// inside an e2e test). Has no visual side-effect — alt-screen toggling
+// is invisible.
+export function tuiCmd(cmd) {
+    return `printf '\\033[?1049h' && ${cmd} && printf '\\033[?1049l'`;
+}
+
 // Wait for the chat input to enter passthrough mode (a command is running
 // and the input is forwarding keystrokes to its PTY).
 export async function waitForPassthrough(page, timeoutMs = 5000) {

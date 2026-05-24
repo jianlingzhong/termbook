@@ -35,6 +35,7 @@ import {
     userScrollTo,
     newSession,
     switchToSessionByIndex,
+    tuiCmd,
 } from './helpers.mjs';
 
 test.use({ viewport: VIEWPORT });
@@ -116,7 +117,7 @@ test.describe('scroll behavior — content shape × scroll state × switch patte
         await runCommand(page, 'echo A_first');
         // open vim and immediately quit so we have a closed-TUI placeholder cell.
         await runCommand(page, 'echo test > /tmp/tb_scroll_vim.txt');
-        await startCommand(page, 'vim /tmp/tb_scroll_vim.txt');
+        await startCommand(page, tuiCmd('vim /tmp/tb_scroll_vim.txt'));
         await page.waitForSelector('.tui-modal-overlay', { timeout: 8000 });
         await page.keyboard.press('Escape');
         await page.keyboard.type(':q!');
@@ -403,7 +404,7 @@ test.describe('scroll behavior — content shape × scroll state × switch patte
         await runCommand(page, 'seq 1 100');
         // Open vim, exit cleanly.
         await runCommand(page, 'echo data > /tmp/tb_scroll_h1.txt');
-        await startCommand(page, 'vim /tmp/tb_scroll_h1.txt');
+        await startCommand(page, tuiCmd('vim /tmp/tb_scroll_h1.txt'));
         await page.waitForSelector('.tui-modal-overlay', { timeout: 8000 });
         await page.keyboard.press('Escape');
         await page.keyboard.type(':q!');
